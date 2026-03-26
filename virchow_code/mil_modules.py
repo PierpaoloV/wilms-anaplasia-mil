@@ -811,7 +811,7 @@ def _extract_top_patches_grid(
     return canvas, top_idx
 
 
-def clam_like_heatmap(
+def wsi_attention_heatmap(
     slide_path: str,
     coords_lvl0: np.ndarray,          # (N,2) top-left in level-0
     scores_raw: np.ndarray,           # (N,) raw logits (consigliato)
@@ -978,7 +978,7 @@ def generate_all_attention_reports(
 
         try:
             # --- heatmap with top-k boxes ---
-            heatmap_img, _ = clam_like_heatmap(
+            heatmap_img, _ = wsi_attention_heatmap(
                 slide_path=slide_path,
                 coords_lvl0=coords,
                 scores_raw=scores_raw,
