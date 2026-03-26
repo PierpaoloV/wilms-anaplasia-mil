@@ -696,6 +696,7 @@ def _extract_top_regions_grid(
     region_size=1024,
     grid=(3, 2),
     pad=8,
+    cmap_name="plasma",
 ):
     """
     Extract top-k 1024×1024 context regions centred on the highest-attention patches.
@@ -712,7 +713,7 @@ def _extract_top_regions_grid(
     canvas_h = rows * (region_size + pad) + pad
     canvas = Image.new("RGB", (canvas_w, canvas_h), (240, 240, 240))
 
-    cmap = plt.get_cmap("inferno")
+    cmap = plt.get_cmap(cmap_name)
     border_w = 10
 
     for j, (idx, score) in enumerate(zip(top_idx, top_scores)):
@@ -764,6 +765,7 @@ def _extract_top_patches_grid(
     patch_size=224,
     grid=(4, 5),
     pad=6,
+    cmap_name="plasma",
 ):
     """
     Extract top-k patches and arrange them in a grid ordered by rank.
@@ -779,7 +781,7 @@ def _extract_top_patches_grid(
     canvas_h = rows * (patch_size + pad) + pad
     canvas = Image.new("RGB", (canvas_w, canvas_h), (240, 240, 240))
 
-    cmap = plt.get_cmap("inferno")
+    cmap = plt.get_cmap(cmap_name)
     border_w = 4
 
     for j, (idx, score) in enumerate(zip(top_idx, top_scores)):
@@ -816,8 +818,8 @@ def clam_like_heatmap(
     vis_level: int = -1,
     patch_level: int = 1,             # <-- per te: 1
     patch_size: int = 224,            # patch size al patch_level
-    alpha: float = 0.45,
-    cmap_name: str = "inferno",
+    alpha: float = 0.6,               # max opacity for high-attention regions
+    cmap_name: str = "plasma",
     convert_to_percentiles: bool = True,
     clip_percentiles: tuple = (5, 99),
     max_size: int | None = 4096,
@@ -872,10 +874,13 @@ def clam_like_heatmap(
     # read base image at vis_level
     base = np.array(wsi.read_region((0, 0), vis_level, (W, H)).convert("RGB"))
 
-    # colormap + blend
+    # Attention-proportional alpha: α(pixel) = overlay * alpha_max
+    # Low-attention pixels are nearly transparent → tissue shows through cleanly.
+    # High-attention pixels reach full alpha_max opacity.
     cmap = plt.get_cmap(cmap_name)
     color = (cmap(overlay)[:, :, :3] * 255).astype(np.uint8)
-    out = (base.astype(np.float32) * (1 - alpha) + color.astype(np.float32) * alpha).astype(np.uint8)
+    alpha_map = (overlay * alpha)[..., np.newaxis]          # [H, W, 1], range 0..alpha
+    out = (base.astype(np.float32) * (1 - alpha_map) + color.astype(np.float32) * alpha_map).astype(np.uint8)
     out_img = Image.fromarray(out)
 
     # draw top-k rectangles (based on RAW logits ranking, not percentiles)
@@ -935,7 +940,8 @@ def generate_all_attention_reports(
     patch_size=224,
     patch_level=1,
     vis_level=-1,
-    alpha=0.45,
+    alpha=0.6,
+    cmap_name="plasma",
     convert_to_percentiles=True,
     max_size=4096,
     use_raw=True,
@@ -980,6 +986,7 @@ def generate_all_attention_reports(
                 patch_level=patch_level,
                 patch_size=patch_size,
                 alpha=alpha,
+                cmap_name=cmap_name,
                 convert_to_percentiles=convert_to_percentiles,
                 max_size=max_size,
                 draw_topk=draw_topk,
@@ -998,6 +1005,7 @@ def generate_all_attention_reports(
                     region_size=1024,
                     grid=(3, 2),
                     pad=8,
+                    cmap_name=cmap_name,
                 )
             else:
                 grid_img, _ = _extract_top_patches_grid(
@@ -1009,6 +1017,7 @@ def generate_all_attention_reports(
                     patch_size=patch_size,
                     grid=(4, 5),
                     pad=6,
+                    cmap_name=cmap_name,
                 )
             wsi.close()
 
