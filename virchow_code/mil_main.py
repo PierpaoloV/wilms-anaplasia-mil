@@ -6,7 +6,7 @@ import gc
 import torch
 import pandas as pd
 from pathlib import Path
-from mil_modules import cross_validate_mil, generate_all_attention_reports_flat,generate_all_attention_reports
+from mil_modules import cross_validate_mil, generate_all_attention_reports
 
 # --------------------------------------------------------------------
 # HELPER
