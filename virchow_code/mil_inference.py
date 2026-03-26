@@ -11,36 +11,16 @@ from mil_modules import (
     MILSlideDataset,
     AttentionSingleBranch,
     generate_all_attention_reports,
+    get_coords,
 )
+from mil_main import load_config
 
 
 # ---------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------
-def merge_dict(defaults, override):
-    out = defaults.copy()
-    out.update(override)
-    return out
-
-
 def get_labels_csv(cfg):
-    # Supporta sia labels_csv che labels_dir
     return cfg.get("labels_csv") or cfg.get("labels_dir")
-
-
-def get_coords(meta):
-    coords = meta.get("coords", None)
-
-    if isinstance(coords, (list, tuple)):
-        coords = coords[0] if len(coords) > 0 else None
-
-    if coords is None:
-        return None
-
-    if torch.is_tensor(coords):
-        return coords.squeeze(0).cpu().numpy()
-
-    return coords
 
 
 # ---------------------------------------------------------
@@ -155,28 +135,19 @@ def run_fold(
 # ---------------------------------------------------------
 # Run full experiment
 # ---------------------------------------------------------
-def run_experiment(run_key, defaults, run_override, device, extract_region, combine_subplots, subplot_layout):
-    cfg = merge_dict(defaults, run_override)
-    # cfg["name"] = run_name
-    exp_name = cfg.get("name", run_key)
+def run_experiment(cfg, device, extract_region, combine_subplots, subplot_layout):
+    exp_name = cfg.get("name", cfg.get("run_key", "unknown"))
 
     labels_csv = get_labels_csv(cfg)
     df = pd.read_csv(labels_csv)
     folds = sorted(df["fold"].unique())
 
-    experiment_dir = os.path.join(
-        defaults["output_base_dir"],
-        exp_name
-    )
-    inference_dir = os.path.join(experiment_dir, "inference")
-    vis_dir=os.path.join(inference_dir,'visual_reports')
+    experiment_dir = os.path.join(cfg["output_base_dir"], exp_name)
+    vis_dir = os.path.join(experiment_dir, "inference", "visual_reports")
     if os.path.exists(vis_dir):
-        n_files = len([
-            f for f in os.listdir(vis_dir) if f.endswith('.png') or f.endswith('.jpg')
-        ])
+        n_files = len([f for f in os.listdir(vis_dir) if f.endswith(".png") or f.endswith(".jpg")])
         if n_files > 100:
-            
-            print(f"\n⏭️ Skipping run '{exp_name}' — inference already exists ({inference_dir})")
+            print(f"\n⏭️ Skipping run '{exp_name}' — inference already exists ({vis_dir})")
             return
 
     print(f"\n==============================")
@@ -212,14 +183,12 @@ if __name__ == "__main__":
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
 
-    defaults = config["defaults"]
-    runs = config["runs"]
+    runs = config.get("runs", {})
 
-    for run_key, run_override in runs.items():
+    for run_key in runs:
+        cfg = load_config(args.config, run_key)
         run_experiment(
-            run_key,
-            defaults,
-            run_override,
+            cfg,
             device=args.device,
             extract_region=args.extract_region,
             combine_subplots=args.combine_subplots,

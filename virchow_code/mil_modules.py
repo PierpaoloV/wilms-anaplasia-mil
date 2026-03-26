@@ -210,6 +210,29 @@ class AttentionSingleBranch(nn.Module):
         return logits, results_dict
 
 
+def _save_attention(output_dir, slide_id, out, meta):
+    """Save softmax attention scores + raw logits + coordinates to .npz."""
+    att_raw = out.get("attention")
+    coords = meta["coords"].squeeze(0).cpu().numpy() if isinstance(meta["coords"], torch.Tensor) else None
+    if att_raw is not None:
+        att_raw_vec = att_raw.squeeze(0).squeeze(-1).detach().cpu().numpy()
+        att = F.softmax(att_raw, dim=1).squeeze(0).squeeze(-1).unsqueeze(1).cpu().numpy()  # [N, 1]
+        np.savez(
+            f"{output_dir}/attentions/{slide_id}_att_with_coords.npz",
+            attention=att, attention_raw=att_raw_vec, coords=coords,
+        )
+
+
+def get_coords(meta):
+    """Extract coords array from a DataLoader batch meta dict."""
+    coords = meta.get("coords", None)
+    if isinstance(coords, (list, tuple)):
+        coords = coords[0] if len(coords) > 0 else None
+    if coords is None:
+        return None
+    if torch.is_tensor(coords):
+        return coords.squeeze(0).cpu().numpy()
+    return coords
 
 
 def cross_validate_mil(
@@ -331,16 +354,7 @@ def cross_validate_mil(
                     slide_id = meta["slide_id"][0]
 
                     # ✅ Save attention + coords
-                    coords = meta["coords"].squeeze(0).cpu().numpy() if isinstance(meta["coords"], torch.Tensor) else None
-                    att_raw = out.get("attention")
-                    if att_raw is not None:
-                        #att = F.softmax(att_raw, dim=2).squeeze(0).squeeze(0).unsqueeze(1).cpu().numpy() #att_raw è [1,N,1] quindi questo è bug
-                        att_raw_vec = att_raw.squeeze(0).squeeze(-1).detach().cpu().numpy()
-                        att = F.softmax(att_raw, dim=1)
-                        att = att.squeeze(0).squeeze(-1)
-                        att = att.unsqueeze(1).cpu().numpy()  # [N, 1]
-                        np.savez(f"{output_dir}/attentions/{slide_id}_att_with_coords.npz",
-                                 attention=att, attention_raw=att_raw_vec, coords=coords)
+                    _save_attention(output_dir, slide_id, out, meta)
 
                     if save_embeddings and "slide_embedding" in out:
                         emb = out["slide_embedding"].cpu().numpy()
@@ -387,16 +401,7 @@ def cross_validate_mil(
                     torch.save(out["slide_embedding"].cpu(), f"{output_dir}/embeddings/{slide_id}_embedding.pt")
                     # np.save(f"{output_dir}/embeddings/{slide_id}_embedding.npy", emb)
 
-                att_raw = out.get("attention")
-                coords = meta["coords"].squeeze(0).cpu().numpy() if isinstance(meta["coords"], torch.Tensor) else None
-                if att_raw is not None:
-                    #att = F.softmax(att_raw, dim=2).squeeze(0).squeeze(0).unsqueeze(1).cpu().numpy() #come prima, sbagliato il softmax
-                    att_raw_vec = att_raw.squeeze(0).squeeze(-1).detach().cpu().numpy()
-                    att = F.softmax(att_raw, dim=1)
-                    att = att.squeeze(0).squeeze(-1)
-                    att = att.unsqueeze(1).cpu().numpy()  # [N, 1]
-                    np.savez(f"{output_dir}/attentions/{slide_id}_att_with_coords.npz",
-                             attention=att, attention_raw=att_raw_vec, coords=coords)
+                _save_attention(output_dir, slide_id, out, meta)
 
                 y_true.append(true)
                 y_pred.append(pred)
@@ -573,154 +578,6 @@ def plot_attention_on_wsi(
     else:
         plt.show()
 
-def generate_all_attention_reports_flat(
-    base_exp_dir,
-    wsi_dir,
-    output_dir=None,
-    patch_size=224,
-    context_factor=2.0,
-    top_k=20,
-    thumbnail_level=5,
-    cmap_cv2="INFERNO",
-    results_csv=None,
-    gc_every=5,
-):
-    """
-    Memory-safe generation of 2×2 composite visualizations per slide.
-    - Closes OpenSlide handles after use.
-    - Clears matplotlib figures.
-    - Forces garbage collection periodically.
-    - Automatically skips slides whose combined image and top patches already exist.
-    """
-
-    base = Path(base_exp_dir)
-    att_dir = base / "attentions"
-    out_root = Path(output_dir or (base / "visual_reports"))
-    out_root.mkdir(parents=True, exist_ok=True)
-
-    # Load mapping slide_id -> fold
-    results_csv = results_csv or (base / "results" / "per_slide_predictions.csv")
-    df = pd.read_csv(results_csv)
-    fold_map = {sid: int(f) for sid, f in zip(df["slide_id"], df["fold"])}
-
-    npz_files = sorted(att_dir.glob("*_att_with_coords.npz"))
-    print(f"🧭 Found {len(npz_files)} attention files")
-
-    for idx, npz_path in enumerate(tqdm(npz_files, desc="Generating reports")):
-        slide_id = npz_path.stem.replace("_att_with_coords", "")
-        fold = fold_map.get(slide_id, None)
-        fold_dir = out_root / (f"fold{fold}" if fold else "fold_unknown")
-
-        vis_dir = out_root / "attention_maps"
-        patch_dir = out_root / slide_id / "top_patches"
-        vis_dir.mkdir(parents=True, exist_ok=True)
-        patch_dir.mkdir(parents=True, exist_ok=True)
-
-        save_path = vis_dir / f"{slide_id}_combined.png"
-
-        # ✅ Skip automatically if outputs already exist
-        patches_exist = patch_dir.exists() and any(patch_dir.glob("*.png"))
-        if save_path.exists() and patches_exist:
-            print(f"⏭️  Skipping {slide_id}: combined image and patches already exist.")
-            continue
-
-        npz_data = np.load(npz_path)
-        att = npz_data["attention"].squeeze()
-        coords = npz_data["coords"]
-        npz_data.close()  # free NPZ memory
-
-        try:
-            slide_path = _find_wsi_path(wsi_dir, slide_id)
-            slide = openslide.OpenSlide(slide_path)
-
-            fig, axes = plt.subplots(2, 2, figsize=(10, 10))
-            fig.suptitle(f"{slide_id} — Attention Overview", fontsize=12)
-            modes = ["linear", "log", "clipped"]
-
-            # --- Top row: attention maps ---
-            for ax, mode in zip(axes[0], modes):
-                try:
-                    img = plot_attention_on_wsi(
-                        slide_id=slide_id,
-                        att_dir=str(att_dir),
-                        wsi_dir=wsi_dir,
-                        thumbnail_level=thumbnail_level,
-                        mode=mode,
-                        cmap_cv2=cmap_cv2,
-                        patch_size=patch_size,
-                        alpha=0.5,
-                        top_k=top_k,
-                        return_image=True,
-                    )
-                    ax.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-                    ax.set_title(mode.capitalize(), fontsize=10)
-                    ax.axis("off")
-                    del img
-                except Exception as e:
-                    ax.text(0.5, 0.5, f"Failed {mode}\n{e}", ha="center", va="center")
-                    ax.axis("off")
-
-            # --- Bottom-right: top patches ---
-            try:
-                top_idx = np.argsort(att)[-top_k:]
-                coords_top = coords[top_idx]
-                att_top = att[top_idx]
-
-                crop_size = int(patch_size * context_factor)
-                patch_images = []
-
-                for i, ((x, y), score) in enumerate(zip(coords_top, att_top)):
-                    x0, y0 = int(x - crop_size / 2), int(y - crop_size / 2)
-                    region = slide.read_region((x0, y0), 0, (crop_size, crop_size)).convert("RGB")
-                    patch_path = patch_dir / f"{slide_id}_top{i+1:02d}_att{score:.4e}.png"
-                    region.save(patch_path)  # ✅ save immediately
-                    patch_images.append(np.array(region))
-                    region.close()
-                slide.close()
-
-                # small preview grid for subplot
-                cols = int(np.ceil(np.sqrt(len(patch_images))))
-                rows = int(np.ceil(len(patch_images) / cols))
-                patch_h, patch_w = patch_images[0].shape[:2]
-                grid = np.ones((rows * patch_h, cols * patch_w, 3), dtype=np.uint8) * 255
-                for i, patch in enumerate(patch_images):
-                    r, c = divmod(i, cols)
-                    grid[r * patch_h:(r + 1) * patch_h, c * patch_w:(c + 1) * patch_w] = patch
-                axes[1, 1].imshow(grid)
-                axes[1, 1].set_title(f"Top {top_k} patches", fontsize=10)
-                axes[1, 1].axis("off")
-                del patch_images, grid
-
-            except Exception as e:
-                axes[1, 1].text(0.5, 0.5, f"Patch fail\n{e}", ha="center", va="center")
-                axes[1, 1].axis("off")
-
-            # --- Bottom-left: placeholder ---
-            axes[1, 0].text(0.5, 0.5, "Summary / Metrics", ha="center", va="center")
-            axes[1, 0].axis("off")
-
-            plt.tight_layout()
-            fig.savefig(save_path, dpi=150, bbox_inches="tight")
-            plt.close(fig)
-            del fig, axes
-
-        except Exception as e:
-            print(f"⚠️ Failed for {slide_id}: {e}")
-            continue
-
-        # ✅ Free memory aggressively every few slides
-        if (idx + 1) % gc_every == 0:
-            gc.collect()
-
-    print("✅ All attention reports generated safely.")
-
-
-# def to_percentiles(x: np.ndarray) -> np.ndarray:
-#     # CLAM usa percentili (0-100) :contentReference[oaicite:4]{index=4}
-#     x = x.astype(np.float32)
-#     r = rankdata(x, method="average")  # 1..N
-#     return 100.0 * (r - 1) / (len(x) - 1 + 1e-12)
-
 def to_percentiles_0_1(x: np.ndarray) -> np.ndarray:
     """Return percentiles in [0,1]."""
     x = x.astype(np.float32).reshape(-1)
@@ -814,81 +671,145 @@ def _combine_subplot(
 
 #     return canvas, top_idx
 
+def _rank_color(rank, n_total, cmap=None):
+    """Return an inferno RGB tuple for a given rank (1-based). Rank 1 → brightest."""
+    if cmap is None:
+        cmap = plt.get_cmap("inferno")
+    val = 1.0 - (rank - 1) / max(n_total - 1, 1)  # 1.0 for rank 1, 0.0 for last
+    return tuple(int(c * 255) for c in cmap(val)[:3])
+
+
+def _draw_label(draw, text, pos, font=None, text_color=(255, 255, 255), shadow_color=(0, 0, 0)):
+    """Draw text with a 1-pixel shadow for visibility on any background."""
+    x, y = pos
+    draw.text((x + 1, y + 1), text, fill=shadow_color, font=font)
+    draw.text((x, y), text, fill=text_color, font=font)
+
+
 def _extract_top_regions_grid(
     wsi,
     coords_lvl0,
     scores,
-    k=20,
+    k=6,
     patch_level=1,
     patch_size=224,
     region_size=1024,
-    grid=(4,5),
-    pad=6
+    grid=(3, 2),
+    pad=8,
 ):
     """
-    Estrae top-k region 1024x1024 (patch_level),
-    con la patch evidenziata al centro.
+    Extract top-k 1024×1024 context regions centred on the highest-attention patches.
+    Each region is annotated with rank (#1, #2, …) and attention score,
+    and bordered with an inferno-scale color (bright yellow = highest, dark purple = lowest).
     """
-
     scores = scores.reshape(-1)
     top_idx = np.argsort(scores)[::-1][:k]
+    top_scores = scores[top_idx]
 
     ds_patch = float(wsi.level_downsamples[patch_level])
-
     rows, cols = grid
-    tile_w = region_size
-    tile_h = region_size
+    canvas_w = cols * (region_size + pad) + pad
+    canvas_h = rows * (region_size + pad) + pad
+    canvas = Image.new("RGB", (canvas_w, canvas_h), (240, 240, 240))
 
-    canvas_w = cols * tile_w + (cols + 1) * pad
-    canvas_h = rows * tile_h + (rows + 1) * pad
-    canvas = Image.new("RGB", (canvas_w, canvas_h), (255,255,255))
+    cmap = plt.get_cmap("inferno")
+    border_w = 10
 
-    for j, idx in enumerate(top_idx):
-        r = j // cols
-        c = j % cols
-
-        x_pad = pad + c * (tile_w + pad)
-        y_pad = pad + r * (tile_h + pad)
+    for j, (idx, score) in enumerate(zip(top_idx, top_scores)):
+        rank = j + 1
+        r, c = divmod(j, cols)
+        x_pad = pad + c * (region_size + pad)
+        y_pad = pad + r * (region_size + pad)
 
         x_lvl0, y_lvl0 = coords_lvl0[idx]
-
-        # patch center in level 0
         patch_size_lvl0 = patch_size * ds_patch
         cx_lvl0 = x_lvl0 + patch_size_lvl0 / 2
         cy_lvl0 = y_lvl0 + patch_size_lvl0 / 2
-
-        # region top-left in level 0
         region_size_lvl0 = region_size * ds_patch
         rx_lvl0 = int(cx_lvl0 - region_size_lvl0 / 2)
         ry_lvl0 = int(cy_lvl0 - region_size_lvl0 / 2)
 
         region = wsi.read_region(
-            (rx_lvl0, ry_lvl0),
-            patch_level,
-            (region_size, region_size)
+            (rx_lvl0, ry_lvl0), patch_level, (region_size, region_size)
         ).convert("RGB")
 
         draw = ImageDraw.Draw(region)
+        color = _rank_color(rank, k, cmap)
 
-        # rectangle for patch inside region (centered)
+        # Colored border
+        for bi in range(border_w):
+            draw.rectangle([bi, bi, region_size - 1 - bi, region_size - 1 - bi], outline=color)
+
+        # Central patch rectangle in same color
         patch_offset = (region_size - patch_size) // 2
         draw.rectangle(
-            [
-                patch_offset,
-                patch_offset,
-                patch_offset + patch_size,
-                patch_offset + patch_size
-            ],
-            outline="black",
-            width=3
+            [patch_offset, patch_offset, patch_offset + patch_size, patch_offset + patch_size],
+            outline=color, width=3,
         )
+
+        # Rank + score label
+        _draw_label(draw, f"#{rank}  {score:.4f}", (border_w + 4, border_w + 4))
 
         canvas.paste(region, (x_pad, y_pad))
 
     return canvas
 
 
-def clam_like_heatmap_with_topk_boxes(
+def _extract_top_patches_grid(
+    wsi,
+    coords_lvl0,
+    scores,
+    k=20,
+    patch_level=1,
+    patch_size=224,
+    grid=(4, 5),
+    pad=6,
+):
+    """
+    Extract top-k patches and arrange them in a grid ordered by rank.
+    Each patch is annotated with rank and attention score, and bordered
+    with an inferno-scale color (bright yellow = highest, dark purple = lowest).
+    """
+    scores = scores.reshape(-1)
+    top_idx = np.argsort(scores)[::-1][:k]
+    top_scores = scores[top_idx]
+
+    rows, cols = grid
+    canvas_w = cols * (patch_size + pad) + pad
+    canvas_h = rows * (patch_size + pad) + pad
+    canvas = Image.new("RGB", (canvas_w, canvas_h), (240, 240, 240))
+
+    cmap = plt.get_cmap("inferno")
+    border_w = 4
+
+    for j, (idx, score) in enumerate(zip(top_idx, top_scores)):
+        rank = j + 1
+        r, c = divmod(j, cols)
+        x_pad = pad + c * (patch_size + pad)
+        y_pad = pad + r * (patch_size + pad)
+
+        x_lvl0, y_lvl0 = coords_lvl0[idx]
+        patch = wsi.read_region(
+            (int(x_lvl0), int(y_lvl0)), patch_level, (patch_size, patch_size)
+        ).convert("RGB")
+
+        draw = ImageDraw.Draw(patch)
+        color = _rank_color(rank, k, cmap)
+
+        # Colored border
+        for bi in range(border_w):
+            draw.rectangle([bi, bi, patch_size - 1 - bi, patch_size - 1 - bi], outline=color)
+
+        # Rank in top-left, score in bottom-left
+        _draw_label(draw, f"#{rank}", (border_w + 2, border_w + 2))
+        _draw_label(draw, f"{score:.4f}", (border_w + 2, patch_size - 14))
+
+        canvas.paste(patch, (x_pad, y_pad))
+
+    return canvas, top_idx
+
+
+def clam_like_heatmap(
     slide_path: str,
     coords_lvl0: np.ndarray,          # (N,2) top-left in level-0
     scores_raw: np.ndarray,           # (N,) raw logits (consigliato)
@@ -979,93 +900,34 @@ def clam_like_heatmap_with_topk_boxes(
     return out_img, top_idx
 
 
+_LABEL_NAMES = {0: "Not Anaplasia", 1: "Anaplasia"}
 
 
-def clam_like_heatmap(
-    slide_path: str,
-    coords_lvl0: np.ndarray,          # (N,2) in level-0 coords (top-left)
-    scores: np.ndarray,               # (N,) raw logits preferred
-    vis_level: int = -1,
-    patch_size_lvl0: int | tuple = 224,
-    alpha: float = 0.45,
-    blank_canvas: bool = False,
-    convert_to_percentiles: bool = True,
-    blur: bool = False,
-    overlap: float = 0.0,
-    cmap_name: str = "inferno",
-    max_size: int | None = 4096,
-    clip_percentiles: tuple = (5, 99),
-):
-    wsi = openslide.open_slide(slide_path)
+def _load_predictions(base_exp_dir, results_csv=None):
+    """Load per-slide predictions from CSV. Returns dict: slide_id -> {true_label, pred_label, prob}."""
+    csv_path = results_csv or os.path.join(base_exp_dir, "results", "per_slide_predictions.csv")
+    if not os.path.exists(csv_path):
+        return {}
+    df = pd.read_csv(csv_path)
+    return {
+        str(row["slide_id"]): {
+            "true_label": int(row["true_label"]),
+            "pred_label": int(row["pred_label"]),
+            "prob":       float(row["prob_anaplasia"]),
+        }
+        for _, row in df.iterrows()
+    }
 
-    if vis_level < 0:
-        vis_level = wsi.get_best_level_for_downsample(32)
 
-    downsample = float(wsi.level_downsamples[vis_level])
-    scale = np.array([1.0 / downsample, 1.0 / downsample], dtype=np.float32)
+def _build_title(slide_id, pred_map):
+    """Build title string with GT and prediction if available."""
+    info = pred_map.get(slide_id)
+    if not info:
+        return slide_id
+    gt_str   = _LABEL_NAMES.get(info["true_label"], "?")
+    pred_str = _LABEL_NAMES.get(info["pred_label"], "?")
+    return f"{slide_id} | GT: {gt_str} | Pred: {pred_str} (p={info['prob']:.2f})"
 
-    # patch size
-    if isinstance(patch_size_lvl0, int):
-        patch_size_lvl0 = (patch_size_lvl0, patch_size_lvl0)  # (w,h)
-    patch_size_lvl = np.ceil(np.array(patch_size_lvl0) * scale).astype(int)
-    pw, ph = int(patch_size_lvl[0]), int(patch_size_lvl[1])
-
-    # coords to vis level
-    coords = np.ceil(coords_lvl0 * scale).astype(int)
-
-    # scores
-    scores = scores.astype(np.float32).reshape(-1)
-    if convert_to_percentiles:
-        scores = to_percentiles_0_1(scores)  # already 0..1
-
-    W, H = wsi.level_dimensions[vis_level]  # (W,H)
-
-    overlay = np.zeros((H, W), dtype=np.float32)
-
-    # ---- MAX pooling over patch rectangles ----
-    for (x, y), s in zip(coords, scores):
-        x0 = max(0, int(x))
-        y0 = max(0, int(y))
-        x1 = min(W, x0 + pw)
-        y1 = min(H, y0 + ph)
-        if x0 >= W or y0 >= H or x1 <= 0 or y1 <= 0:
-            continue
-        overlay[y0:y1, x0:x1] = np.maximum(overlay[y0:y1, x0:x1], float(s))
-
-    # optional blur (usually not needed with MAX)
-    if blur:
-        kx = max(3, (int(pw * (1 - overlap)) * 2 + 1) | 1)
-        ky = max(3, (int(ph * (1 - overlap)) * 2 + 1) | 1)
-        overlay = cv2.GaussianBlur(overlay, (kx, ky), 0)
-
-    # ---- contrast stretch on nonzero region ----
-    nz = overlay > 0
-    if np.any(nz):
-        lo, hi = np.percentile(overlay[nz], clip_percentiles)
-        overlay = np.clip(overlay, lo, hi)
-        overlay = (overlay - overlay.min()) / (overlay.max() - overlay.min() + 1e-12)
-
-    # canvas
-    region_size = (W, H)
-    if blank_canvas:
-        img = np.ones((H, W, 3), dtype=np.uint8) * 255
-    else:
-        img = np.array(wsi.read_region((0, 0), vis_level, region_size).convert("RGB"))
-
-    # colormap + alpha
-    cmap = plt.get_cmap(cmap_name)
-    color = (cmap(overlay)[:, :, :3] * 255).astype(np.uint8)
-    out = (img.astype(np.float32) * (1 - alpha) + color.astype(np.float32) * alpha).astype(np.uint8)
-    out_img = Image.fromarray(out)
-
-    # resize
-    if max_size is not None:
-        w, h = out_img.size
-        if max(w, h) > max_size:
-            f = max_size / max(w, h)
-            out_img = out_img.resize((int(w * f), int(h * f)), Image.BILINEAR)
-
-    return out_img
 
 def generate_all_attention_reports(
     base_exp_dir,
@@ -1079,102 +941,107 @@ def generate_all_attention_reports(
     use_raw=True,
     extract_region=False,
     draw_topk=20,
-    combine_subplots=True,           # <-- NUOVO FLAG
-    subplot_layout="horizontal"      # <-- NUOVO FLAG
+    combine_subplots=True,
+    subplot_layout="horizontal",
+    results_csv=None,
 ):
     att_dir = os.path.join(base_exp_dir, "attentions")
     out_dir = os.path.join(base_exp_dir, "visual_reports")
     os.makedirs(out_dir, exist_ok=True)
 
+    pred_map = _load_predictions(base_exp_dir, results_csv)
+
     files = [f for f in os.listdir(att_dir) if f.endswith(".npz")]
-    print(f"🧭 Found {len(files)} attention files")
+    print(f"Found {len(files)} attention files")
 
     for fname in tqdm(files, desc="Generating attention reports"):
         data = np.load(os.path.join(att_dir, fname))
-
-        coords = data["coords"].astype(np.float32)
-
-        if use_raw and "attention_raw" in data:
-            scores_raw = data["attention_raw"].astype(np.float32).reshape(-1)
-        else:
-            scores_raw = data["attention"].astype(np.float32).reshape(-1)
-
-        slide_id = fname.replace("_att_with_coords.npz", "")
-        slide_path = os.path.join(wsi_dir, slide_id + ".mrxs")
-
-        if not os.path.exists(slide_path):
-            print(f"⚠️ Slide not found: {slide_path}")
-            continue
-
-        # --- heatmap con topk box ---
-        heatmap_img, top_idx = clam_like_heatmap_with_topk_boxes(
-            slide_path=slide_path,
-            coords_lvl0=coords,
-            scores_raw=scores_raw,
-            vis_level=vis_level,
-            patch_level=patch_level,
-            patch_size=patch_size,
-            alpha=alpha,
-            convert_to_percentiles=convert_to_percentiles,
-            max_size=max_size,
-            draw_topk=draw_topk,
+        coords     = data["coords"].astype(np.float32)
+        scores_raw = (
+            data["attention_raw"].astype(np.float32).reshape(-1)
+            if use_raw and "attention_raw" in data
+            else data["attention"].astype(np.float32).reshape(-1)
         )
 
-        
+        slide_id = fname.replace("_att_with_coords.npz", "")
+        try:
+            slide_path = _find_wsi_path(wsi_dir, slide_id)
+        except FileNotFoundError:
+            print(f"Slide not found: {slide_id}")
+            continue
 
-        # --- top patches grid ---
-        wsi = openslide.open_slide(slide_path)
-        if extract_region:
-            topk = 6
-            grid_img = _extract_top_regions_grid(
-                wsi=wsi,
+        try:
+            # --- heatmap with top-k boxes ---
+            heatmap_img, _ = clam_like_heatmap(
+                slide_path=slide_path,
                 coords_lvl0=coords,
-                scores=scores_raw,
-                k=topk,
+                scores_raw=scores_raw,
+                vis_level=vis_level,
                 patch_level=patch_level,
                 patch_size=patch_size,
-                region_size=1024,
-                grid=(3, 2),     # 5 regioni orizzontali
-                pad=8,
-            )
-        else:
-            topk=20
-            grid_img, _ = _extract_top_patches_grid(
-                wsi=wsi,
-                coords_lvl0=coords,
-                scores=scores_raw,
-                k=draw_topk,
-                patch_level=patch_level,
-                patch_size=patch_size,
-                grid=(4, 5),
-                pad=6,
+                alpha=alpha,
+                convert_to_percentiles=convert_to_percentiles,
+                max_size=max_size,
+                draw_topk=draw_topk,
             )
 
-
-
-        # --- subplot combine (opzionale) ---
-        if combine_subplots:
-            combined = _combine_subplot(
-                heatmap_img,
-                grid_img,
-                layout=subplot_layout,
-                pad=30,
-                title=f"{slide_id} | Heatmap + Top {draw_topk} patches"
-            )
-            max_combined_size=9000
-            if max(combined.size) > max_combined_size:
-                f = max_combined_size / max(combined.size)
-                combined = combined.resize(
-                    (int(combined.width * f), int(combined.height * f)),
-            Image.BILINEAR
+            # --- ranked patch / region grid ---
+            wsi = openslide.open_slide(slide_path)
+            if extract_region:
+                grid_img = _extract_top_regions_grid(
+                    wsi=wsi,
+                    coords_lvl0=coords,
+                    scores=scores_raw,
+                    k=6,
+                    patch_level=patch_level,
+                    patch_size=patch_size,
+                    region_size=1024,
+                    grid=(3, 2),
+                    pad=8,
                 )
-            combined_path = os.path.join(out_dir, f"{slide_id}_combined.jpg")
-            combined.save(combined_path,quality=92,optimize=True,progressive=True)
-        else:
-            heatmap_path = os.path.join(out_dir, f"{slide_id}_heatmap_top{draw_topk}.jpg")
-            heatmap_img.save(heatmap_path,quality=92,optimize=True,progressive=True)
-            grid_path = os.path.join(out_dir, f"{slide_id}_top{draw_topk}_patches.jpg")
-            grid_img.save(grid_path,quality=92,optimize=True,progressive=True)
-        wsi.close()
+            else:
+                grid_img, _ = _extract_top_patches_grid(
+                    wsi=wsi,
+                    coords_lvl0=coords,
+                    scores=scores_raw,
+                    k=draw_topk,
+                    patch_level=patch_level,
+                    patch_size=patch_size,
+                    grid=(4, 5),
+                    pad=6,
+                )
+            wsi.close()
 
-    print("✅ Attention reports generated.")
+            title = _build_title(slide_id, pred_map)
+
+            if combine_subplots:
+                combined = _combine_subplot(
+                    heatmap_img, grid_img,
+                    layout=subplot_layout,
+                    pad=30,
+                    title=title,
+                )
+                if max(combined.size) > 9000:
+                    f = 9000 / max(combined.size)
+                    combined = combined.resize(
+                        (int(combined.width * f), int(combined.height * f)), Image.BILINEAR
+                    )
+                combined.save(
+                    os.path.join(out_dir, f"{slide_id}_combined.jpg"),
+                    quality=92, optimize=True, progressive=True,
+                )
+            else:
+                heatmap_img.save(
+                    os.path.join(out_dir, f"{slide_id}_heatmap_top{draw_topk}.jpg"),
+                    quality=92, optimize=True, progressive=True,
+                )
+                grid_img.save(
+                    os.path.join(out_dir, f"{slide_id}_top{draw_topk}_patches.jpg"),
+                    quality=92, optimize=True, progressive=True,
+                )
+
+        except Exception as e:
+            print(f"Failed for {slide_id}: {e}")
+            continue
+
+    print("Attention reports generated.")
