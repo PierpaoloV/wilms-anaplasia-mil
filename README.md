@@ -263,4 +263,4 @@ Binarization collapses Focal and Diffuse into a single **Anaplasia** class (labe
 
 ## License
 
-[To be defined]
+This project is licensed under the [Apache License 2.0](LICENSE).
