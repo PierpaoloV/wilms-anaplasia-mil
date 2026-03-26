@@ -1,0 +1,129 @@
+defaults:
+  output_base_dir: "/opt/app/user/postdoc/Anaplasia_Classification/Experiments"
+  feature_dir: "/opt/app/user/postdoc/Anaplasia_Classification/Complete_cases/features/"
+  label_csv: "/opt/app/user/postdoc/Anaplasia_Classification/csvs/splits_updated.csv"
+  binary: true
+  num_epochs: 100
+  lr: 0.001
+  patience: 10
+  penalty_factor: 0.0
+  hdim: 256          # only used by mlp runs
+
+runs:
+
+  # --- Linear probing: all slides ---
+  linear_all_0penalty:
+    name: "linear_probing/all_slides/all_slides_0_penalty"
+    model: "linear"
+    penalty_factor: 0.0
+
+  linear_all_5penalty:
+    name: "linear_probing/all_slides/all_slides_5_penalty"
+    model: "linear"
+    penalty_factor: 5.0
+
+  linear_all_10penalty:
+    name: "linear_probing/all_slides/all_slides_10_penalty"
+    model: "linear"
+    penalty_factor: 10.0
+
+  # --- Linear probing: yes slides ---
+  linear_yes_0penalty:
+    name: "linear_probing/yes_slides/yes_slides_0_penalty"
+    model: "linear"
+    penalty_factor: 0.0
+    label_csv: "/opt/app/user/postdoc/Anaplasia_Classification/csvs/splits_selected_yes.csv"
+
+  linear_yes_5penalty:
+    name: "linear_probing/yes_slides/yes_slides_5_penalty"
+    model: "linear"
+    penalty_factor: 5.0
+    label_csv: "/opt/app/user/postdoc/Anaplasia_Classification/csvs/splits_selected_yes.csv"
+
+  linear_yes_10penalty:
+    name: "linear_probing/yes_slides/yes_slides_10_penalty"
+    model: "linear"
+    penalty_factor: 10.0
+    label_csv: "/opt/app/user/postdoc/Anaplasia_Classification/csvs/splits_selected_yes.csv"
+
+  # --- MLP 64-dim hidden: all slides ---
+  mlp_all_64hdim_0penalty:
+    name: "multi_layer_perceptron/all_slides/all_slides_64hdim_0_penalty"
+    model: "mlp"
+    hdim: 64
+    penalty_factor: 0.0
+
+  mlp_all_64hdim_5penalty:
+    name: "multi_layer_perceptron/all_slides/all_slides_64hdim_5_penalty"
+    model: "mlp"
+    hdim: 64
+    penalty_factor: 5.0
+
+  mlp_all_64hdim_10penalty:
+    name: "multi_layer_perceptron/all_slides/all_slides_64hdim_10_penalty"
+    model: "mlp"
+    hdim: 64
+    penalty_factor: 10.0
+
+  # --- MLP 256-dim hidden: all slides ---
+  mlp_all_256hdim_0penalty:
+    name: "multi_layer_perceptron/all_slides/all_slides_256hdim_0_penalty"
+    model: "mlp"
+    hdim: 256
+    penalty_factor: 0.0
+
+  mlp_all_256hdim_5penalty:
+    name: "multi_layer_perceptron/all_slides/all_slides_256hdim_5_penalty"
+    model: "mlp"
+    hdim: 256
+    penalty_factor: 5.0
+
+  mlp_all_256hdim_10penalty:
+    name: "multi_layer_perceptron/all_slides/all_slides_256hdim_10_penalty"
+    model: "mlp"
+    hdim: 256
+    penalty_factor: 10.0
+
+  # --- MLP 64-dim hidden: yes slides ---
+  mlp_yes_64hdim_0penalty:
+    name: "multi_layer_perceptron/yes_slides/yes_slides_64hdim_0_penalty"
+    model: "mlp"
+    hdim: 64
+    penalty_factor: 0.0
+    label_csv: "/opt/app/user/postdoc/Anaplasia_Classification/csvs/splits_selected_yes.csv"
+
+  mlp_yes_64hdim_5penalty:
+    name: "multi_layer_perceptron/yes_slides/yes_slides_64hdim_5_penalty"
+    model: "mlp"
+    hdim: 64
+    penalty_factor: 5.0
+    label_csv: "/opt/app/user/postdoc/Anaplasia_Classification/csvs/splits_selected_yes.csv"
+
+  mlp_yes_64hdim_10penalty:
+    name: "multi_layer_perceptron/yes_slides/yes_slides_64hdim_10_penalty"
+    model: "mlp"
+    hdim: 64
+    penalty_factor: 10.0
+    label_csv: "/opt/app/user/postdoc/Anaplasia_Classification/csvs/splits_selected_yes.csv"
+
+  # --- MLP 256-dim hidden: yes slides ---
+  mlp_yes_256hdim_0penalty:
+    name: "multi_layer_perceptron/yes_slides/yes_slides_256hdim_0_penalty"
+    model: "mlp"
+    hdim: 256
+    penalty_factor: 0.0
+    label_csv: "/opt/app/user/postdoc/Anaplasia_Classification/csvs/splits_selected_yes.csv"
+
+  mlp_yes_256hdim_5penalty:
+    name: "multi_layer_perceptron/yes_slides/yes_slides_256hdim_5_penalty"
+    model: "mlp"
+    hdim: 256
+    penalty_factor: 5.0
+    label_csv: "/opt/app/user/postdoc/Anaplasia_Classification/csvs/splits_selected_yes.csv"
+
+  mlp_yes_256hdim_10penalty:
+    name: "multi_layer_perceptron/yes_slides/yes_slides_256hdim_10_penalty"
+    model: "mlp"
+    hdim: 256
+    penalty_factor: 10.0
+    label_csv: "/opt/app/user/postdoc/Anaplasia_Classification/csvs/splits_selected_yes.csv"

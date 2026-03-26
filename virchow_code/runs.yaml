@@ -1,0 +1,53 @@
+defaults:
+  output_base_dir: "/opt/app/user/postdoc/Anaplasia_Classification/virchow/experiments_complete/"
+  base_dir: "/opt/app/user/postdoc/Anaplasia_Classification/virchow/virchow_features/2025-10-08_14_17/"
+  labels_csv: "/opt/app/user/postdoc/Anaplasia_Classification/csvs/splits_updated.csv"
+  wsi_dir: "/data/pa_cpgarchive/archives/kidney/Wilms_Tumor/Images/"
+  patch_size: 224
+  n_classes: 2
+  epochs: 20
+  lr: 1e-4
+  batch_size: 1
+  penalty_factor: 0.0
+  weighted: false
+  size: [1280, 512, 256]
+  device: "cuda"
+  seed: 42
+  save_attentions: true
+  save_embeddings: true
+  top_k: 20
+  context_factor: 2.0
+  thumbnail_level: 5
+  cmap_cv2: "INFERNO"
+  mode: "full"
+
+runs:
+  baseline:
+    name: "anaplasia_mil_baseline"
+    
+  baseline_weighted:
+    name: "anaplasia_mil_weighted_baseline"
+    weighted: true
+
+  deep_attention:
+    name: "anaplasia_mil_deep_weighted"
+    weighted: true
+    size: [1280, 2048, 1024, 512, 256]
+
+  only_yes:
+    name: "anaplasia_mil_only_yes_weigthed"
+    weighted: true
+    labels_dir: "/opt/app/user/postdoc/Anaplasia_Classification/csvs/splits_selected_yes.csv"
+
+  deep_yes:
+    name: "anaplasia_mil_deep_yes_weighted"
+    weighted: true
+    size: [1280, 2048, 1024, 512, 256]
+    labels_dir: "/opt/app/user/postdoc/Anaplasia_Classification/csvs/splits_selected_yes.csv"
+
+  yes_penalty:
+    name: "anaplasia_mil_only_yes_weigthed_p20"
+    weighted: true
+    penalty_factor: 2.0
+    labels_dir: "/opt/app/user/postdoc/Anaplasia_Classification/csvs/splits_selected_yes.csv"
+    

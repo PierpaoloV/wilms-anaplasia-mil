@@ -1,0 +1,37 @@
+# csv: "/data/temporary/clement/dataset/tcga-prad/mutations/tcga-prad-tp53-slide2vec.csv"
+# csv: "/data/temporary/clement/dataset/tcga-blca/mutations/tcga-blca-tp53-slide2vec.csv"
+csv: "/opt/app/user/maxiwiti.csv"
+
+output_dir: "/data/temporary/pierpaolo/postdoc/Anaplasia_Classification" # output directory
+resume: ''
+resume_dirname: ""
+
+visualize: true
+
+tiling:
+  params:
+    spacing: 0.5 # spacing at which to tile the slide, in microns per pixel
+    tolerance: 0.07 # tolerance for matching the spacing (float between 0 and 1, deciding how much the spacing can deviate from the one specified in the slide metadata)
+    tile_size: 224 # size of the tiles to extract, in pixels
+    min_tissue_percentage: 0.1 # threshold used to filter out tiles that have less tissue than this value (percentage)
+  seg_params:
+    tissue_pixel_value: 2
+  filter_params:
+    ref_tile_size: 224
+
+model:
+  level: "slide" # level at which to extract the features ("tile", "region" or "slide")
+  name: "prism"
+  batch_size: 32
+
+speed:
+  fp16: true # use mixed precision during model inference
+
+wandb:
+  enable: false
+  project: "Anaplasia_Classification"
+  username: "pierpaolov"
+  exp_name: "features_extraction"
+  # tags: ["features", "tcga-prad", "${model.name}", "${model.level}", "${tiling.params.tile_size}"]
+  # tags: ["features", "tcga-blca", "${model.name}", "${model.level}", "${tiling.params.tile_size}"]
+  tags: ["features", "wilms-tumor", "${model.name}", "${model.level}", "${tiling.params.tile_size}"]

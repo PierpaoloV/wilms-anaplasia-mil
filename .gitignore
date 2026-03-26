@@ -1,0 +1,26 @@
+# Data — never commit features, coordinates, or models
+*.pt
+*.npy
+*.npz
+
+# Results / outputs
+*.csv
+*.png
+*.jpg
+*.pptx
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+~$*
+
+# Experiments output folders
+Experiments/
+Anaplasia_Classification/virchow/
+Anaplasia_Classification/virchow2/
+Anaplasia_Classification/Experiments_december/
