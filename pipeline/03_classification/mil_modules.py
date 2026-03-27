@@ -56,7 +56,7 @@ class MILSlideDataset(Dataset):
 
     def _load_features(self, slide_id):
         path = self.features_dir / f"{slide_id}.pt"
-        feats = torch.load(path)  # expected tensor [N, D]
+        feats = torch.load(path, weights_only=True)  # expected tensor [N, D]
         if feats.dtype != torch.float32:
             feats = feats.float()
         return feats
@@ -327,7 +327,7 @@ def run_inference_fold(
         use_dropout=cfg.get("use_dropout", False),
         n_classes=cfg.get("n_classes", 2),
     )
-    model.load_state_dict(torch.load(model_path, map_location=dev))
+    model.load_state_dict(torch.load(model_path, map_location=dev, weights_only=True))
     model.to(dev)
     model.eval()
 
@@ -549,7 +549,7 @@ def cross_validate_mil(
         all_val_losses.append(val_losses)
 
         # === Final evaluation ===
-        model.load_state_dict(torch.load(best_model_path))
+        model.load_state_dict(torch.load(best_model_path, weights_only=True))
         model.eval()
         y_true, y_pred, y_prob = [], [], []
 
