@@ -187,44 +187,50 @@ def main():
     if args.run.lower() == "all":
         print(f"🧪 Running all {len(all_runs)} experiments defined in {args.config}\n")
 
+        output_base_dir = None
+
         for run_name in all_runs:
             cfg = load_config(args.config, run_name)
+            output_base_dir = cfg.get("output_base_dir", str(Path(cfg["output_dir"]).parent))
             summary_path = Path(cfg["output_dir"]) / "results" / "summary.csv"
-        
+
             if summary_path.exists() and not args.rerun:
                 print(f"⏭️ Skipping '{cfg['name']}' — summary already exists ({summary_path})")
-                continue
-        
-            try:
-                print(f"\n🚀 Starting experiment: {cfg['name']}")
-                print(f"{'='*60}\n🧠 Device: {cfg.get('device', 'cpu')}")
-                print(f"\n🔍 CONFIGURATION FOR {cfg['name']}:")
-                for k, v in cfg.items():
-                    print(f"  {k}: {v} ({type(v).__name__})")
-                print("=" * 60)
-        
-                run_experiment(cfg)
-
-                if summary_path.exists():
-                    summary_df = pd.read_csv(summary_path, index_col=0).transpose()
-                    summary_df["run_name"] = cfg["name"]
+            else:
+                try:
+                    print(f"\n🚀 Starting experiment: {cfg['name']}")
+                    print(f"{'='*60}\n🧠 Device: {cfg.get('device', 'cpu')}")
+                    print(f"\n🔍 CONFIGURATION FOR {cfg['name']}:")
                     for k, v in cfg.items():
-                        if isinstance(v, (int, float, str, bool, list)):
-                            summary_df[k] = str(v)
-                    all_summaries.append(summary_df)
+                        print(f"  {k}: {v} ({type(v).__name__})")
+                    print("=" * 60)
 
-            except Exception as e:
-                print(f"⚠️ Run {cfg['name']} failed: {e}")
-            finally:
-                torch.cuda.empty_cache()
-                gc.collect()
+                    run_experiment(cfg)
 
-        # Combine summaries at the end
-        if all_summaries:
-            combined_df = pd.concat(all_summaries, ignore_index=True)
-            combined_path = Path(f"{cfg['output_dir']}/all_experiments_summary.csv")
+                except Exception as e:
+                    print(f"⚠️ Run {cfg['name']} failed: {e}")
+                finally:
+                    torch.cuda.empty_cache()
+                    gc.collect()
+
+            # Collect mean metrics regardless of whether we just ran or skipped
+            if summary_path.exists():
+                row = pd.read_csv(summary_path, index_col=0).loc["mean"].to_dict()
+                row["run_name"] = cfg["name"]
+                for k, v in cfg.items():
+                    if isinstance(v, (int, float, str, bool, list)):
+                        row[k] = str(v)
+                all_summaries.append(row)
+
+        # Save combined results to output_base_dir
+        if all_summaries and output_base_dir:
+            combined_df = pd.DataFrame(all_summaries)
+            cols = ["run_name"] + [c for c in combined_df.columns if c != "run_name"]
+            combined_df = combined_df[cols]
+            combined_path = Path(output_base_dir) / "combined_results.csv"
             combined_df.to_csv(combined_path, index=False)
-            print(f"\n📊 Combined summary saved to: {combined_path}")
+            print(f"\n📊 Combined results saved to: {combined_path}")
+            print(combined_df[["run_name", "accuracy", "f1", "auc"]].to_string(index=False))
 
         print("\n✅ All experiments completed successfully.")
 
