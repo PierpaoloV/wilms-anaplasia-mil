@@ -1082,6 +1082,18 @@ def wsi_attention_heatmap(
 _LABEL_NAMES = {0: "Not Anaplasia", 1: "Anaplasia"}
 
 
+def _available_cpus():
+    """Return the number of CPUs available to this process.
+
+    Respects SLURM allocations (SLURM_CPUS_PER_TASK) before falling back to
+    os.cpu_count(), so it works correctly inside SLURM Docker jobs.
+    """
+    slurm = os.environ.get("SLURM_CPUS_PER_TASK")
+    if slurm:
+        return int(slurm)
+    return os.cpu_count() or 1
+
+
 def _render_one_slide(job):
     """
     Render the attention report for a single slide.
@@ -1240,7 +1252,7 @@ def generate_all_attention_reports(
     pred_map = _load_predictions(base_exp_dir, results_csv)
     files    = [f for f in os.listdir(att_dir) if f.endswith(".npz")]
     n        = len(files)
-    workers  = min(num_workers or os.cpu_count() or 1, n)
+    workers  = min(num_workers or _available_cpus(), n)
 
     console.print(f"Found [bold]{n}[/bold] attention files — using [bold]{workers}[/bold] workers")
 
