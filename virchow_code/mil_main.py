@@ -6,7 +6,7 @@ import gc
 import torch
 import pandas as pd
 from pathlib import Path
-from mil_modules import cross_validate_mil, run_inference_fold
+from mil_modules import cross_validate_mil, run_inference_fold, generate_experiment_reports
 
 # --------------------------------------------------------------------
 # HELPER
@@ -112,7 +112,8 @@ def run_experiment(cfg):
         folds = sorted(df["fold"].unique())
         for fold in folds:
             print(f"\n--- Fold {fold} ---")
-            run_inference_fold(output_dir, fold, cfg, device=str(device))
+            run_inference_fold(output_dir, fold, cfg, device=str(device), generate_reports=False)
+        generate_experiment_reports(output_dir, cfg)
         return
 
     try:
@@ -137,8 +138,9 @@ def run_experiment(cfg):
             df    = pd.read_csv(cfg["labels_csv"])
             folds = sorted(df["fold"].unique())
             for fold in folds:
-                print(f"\n--- Generating inference reports: fold {fold} ---")
-                run_inference_fold(output_dir, fold, cfg, device=str(device))
+                print(f"\n--- Fold {fold} inference ---")
+                run_inference_fold(output_dir, fold, cfg, device=str(device), generate_reports=False)
+            generate_experiment_reports(output_dir, cfg)
 
         print(f"✅ Finished {cfg['name']}")
         torch.cuda.empty_cache()
