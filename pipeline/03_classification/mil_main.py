@@ -208,12 +208,9 @@ def main():
                     "weighted":       cfg.get("weighted", False),
                     "penalty_factor": cfg.get("penalty_factor", 0.0),
                     "architecture":   "→".join(str(s) for s in size),
-                    "f1":             round(df_s.loc["mean", "f1"], 4),
-                    "f1_std":         round(df_s.loc["std",  "f1"], 4),
-                    "auc":            round(df_s.loc["mean", "auc"], 4),
-                    "auc_std":        round(df_s.loc["std",  "auc"], 4),
-                    "precision":      round(df_s.loc["mean", "precision"], 4),
-                    "precision_std":  round(df_s.loc["std",  "precision"], 4),
+                    "f1":        f"{round(df_s.loc['mean','f1'],4)} ± {round(df_s.loc['std','f1'],4)}",
+                    "auc":       f"{round(df_s.loc['mean','auc'],4)} ± {round(df_s.loc['std','auc'],4)}",
+                    "precision": f"{round(df_s.loc['mean','precision'],4)} ± {round(df_s.loc['std','precision'],4)}",
                 }
                 all_summaries.append(row)
 
