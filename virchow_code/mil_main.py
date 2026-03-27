@@ -115,12 +115,14 @@ def run_experiment(cfg):
             patch_level=1,
             vis_level=int(cfg.get("vis_level", -1)),
             alpha=float(cfg.get("alpha", 0.6)),
+            cmap_name=cfg.get("cmap_name", "plasma"),
             convert_to_percentiles=bool(cfg.get("convert_to_percentiles", True)),
             max_size=int(cfg.get("max_size", 4096)),
             use_raw=bool(cfg.get("use_raw", True)),
-            draw_topk=20,
-            combine_subplots=True,
-            subplot_layout='horizontal'
+            draw_topk=int(cfg.get("draw_topk", 20)),
+            combine_subplots=bool(cfg.get("combine_subplots", True)),
+            subplot_layout=cfg.get("subplot_layout", "horizontal"),
+            results_csv=os.path.join(output_dir, "results", "per_slide_predictions.csv"),
         )
         return
 
@@ -141,7 +143,7 @@ def run_experiment(cfg):
             weighted=cfg.get("weighted", False),
         )
 
-        # --- Save t-SNE or attention maps (optional) ---
+        # --- Generate attention heatmaps ---
         if cfg.get("mode", "full") == "full":
             generate_all_attention_reports(
                 base_exp_dir=output_dir,
@@ -150,12 +152,14 @@ def run_experiment(cfg):
                 patch_level=1,
                 vis_level=int(cfg.get("vis_level", -1)),
                 alpha=float(cfg.get("alpha", 0.6)),
+                cmap_name=cfg.get("cmap_name", "plasma"),
                 convert_to_percentiles=bool(cfg.get("convert_to_percentiles", True)),
                 max_size=int(cfg.get("max_size", 4096)),
                 use_raw=bool(cfg.get("use_raw", True)),
-                draw_topk=20,
-                combine_subplots=True,
-                subplot_layout='horizontal'
+                draw_topk=int(cfg.get("draw_topk", 20)),
+                combine_subplots=bool(cfg.get("combine_subplots", True)),
+                subplot_layout=cfg.get("subplot_layout", "horizontal"),
+                results_csv=os.path.join(output_dir, "results", "per_slide_predictions.csv"),
             )
 
         print(f"✅ Finished {cfg['name']}")
