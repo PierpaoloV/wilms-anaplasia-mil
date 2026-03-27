@@ -135,7 +135,7 @@ def run_fold(
 # ---------------------------------------------------------
 # Run full experiment
 # ---------------------------------------------------------
-def run_experiment(cfg, device, extract_region, combine_subplots, subplot_layout):
+def run_experiment(cfg, device, extract_region, combine_subplots, subplot_layout, rerun=False):
     exp_name = cfg.get("name", cfg.get("run_key", "unknown"))
 
     labels_csv = get_labels_csv(cfg)
@@ -144,7 +144,7 @@ def run_experiment(cfg, device, extract_region, combine_subplots, subplot_layout
 
     experiment_dir = os.path.join(cfg["output_base_dir"], exp_name)
     vis_dir = os.path.join(experiment_dir, "inference", "visual_reports")
-    if os.path.exists(vis_dir):
+    if not rerun and os.path.exists(vis_dir):
         n_files = len([f for f in os.listdir(vis_dir) if f.endswith(".png") or f.endswith(".jpg")])
         if n_files > 100:
             print(f"\n⏭️ Skipping run '{exp_name}' — inference already exists ({vis_dir})")
@@ -173,10 +173,12 @@ def run_experiment(cfg, device, extract_region, combine_subplots, subplot_layout
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
+    parser.add_argument("--run", default="all", help="Run name or 'all'")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--extract_region", action="store_true")
     parser.add_argument("--combine_subplots", action="store_true")
     parser.add_argument("--subplot_layout", default="horizontal")
+    parser.add_argument("--rerun", action="store_true", help="Regenerate reports even if they already exist")
 
     args = parser.parse_args()
 
@@ -184,8 +186,9 @@ if __name__ == "__main__":
         config = yaml.safe_load(f)
 
     runs = config.get("runs", {})
+    run_keys = runs.keys() if args.run == "all" else [args.run]
 
-    for run_key in runs:
+    for run_key in run_keys:
         cfg = load_config(args.config, run_key)
         run_experiment(
             cfg,
@@ -193,6 +196,7 @@ if __name__ == "__main__":
             extract_region=args.extract_region,
             combine_subplots=args.combine_subplots,
             subplot_layout=args.subplot_layout,
+            rerun=args.rerun,
         )
 
     print("\n🎉 All runs completed.")
