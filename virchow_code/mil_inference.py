@@ -1,135 +1,10 @@
 import os
 import argparse
 import yaml
-import numpy as np
 import pandas as pd
-import torch
-import torch.nn.functional as F
-from tqdm import tqdm
 
-from mil_modules import (
-    MILSlideDataset,
-    AttentionSingleBranch,
-    generate_all_attention_reports,
-    get_coords,
-)
+from mil_modules import run_inference_fold
 from mil_main import load_config
-
-
-# ---------------------------------------------------------
-# Utilities
-# ---------------------------------------------------------
-def get_labels_csv(cfg):
-    return cfg.get("labels_csv") or cfg.get("labels_dir")
-
-
-# ---------------------------------------------------------
-# Single fold inference
-# ---------------------------------------------------------
-def run_fold(
-    experiment_dir,
-    fold,
-    cfg,
-    device="cuda",
-    extract_region=False,
-    combine_subplots=True,
-    subplot_layout="horizontal",
-):
-    labels_csv = get_labels_csv(cfg)
-    features_dir = f"{cfg['base_dir']}/features"
-    coord_dir = f"{cfg['base_dir']}/coordinates"
-    wsi_dir = cfg["wsi_dir"]
-
-    df = pd.read_csv(labels_csv)
-    fold_ids = df.loc[df["fold"] == fold, "slide_id"].astype(str).tolist()
-
-    if len(fold_ids) == 0:
-        print(f"⚠️ No slides for fold {fold}")
-        return
-
-    model_path = os.path.join(
-        experiment_dir,
-        "models",
-        f"mil_best_fold{fold}.pt"
-    )
-
-    if not os.path.exists(model_path):
-        print(f"⚠️ Model missing: {model_path}")
-        return
-
-    print(f"\n🚀 Run: {cfg['name']} | Fold {fold}")
-    print(f"🧠 Model: {model_path}")
-
-    # Output dir per run/fold
-    fold_out = os.path.join(experiment_dir, "inference")
-    os.makedirs(fold_out, exist_ok=True)
-
-    # Dataset
-    ds = MILSlideDataset(
-        labels_csv=labels_csv,
-        features_dir=features_dir,
-        coord_dir=coord_dir,
-        slide_ids=fold_ids,
-    )
-
-    loader = torch.utils.data.DataLoader(ds, batch_size=1, shuffle=False)
-
-    # Model
-    dev = torch.device(device if torch.cuda.is_available() else "cpu")
-    model = AttentionSingleBranch(
-        size=tuple(cfg["size"]),
-        use_dropout=cfg.get("use_dropout", False),
-        n_classes=cfg.get("n_classes", 2),
-    )
-
-    state = torch.load(model_path, map_location=dev)
-    model.load_state_dict(state)
-    model.to(dev)
-    model.eval()
-
-    att_dir = os.path.join(fold_out, "attentions")
-    emb_dir = os.path.join(fold_out, "embeddings")
-
-    os.makedirs(att_dir, exist_ok=True)
-    os.makedirs(emb_dir, exist_ok=True)
-
-    with torch.no_grad():
-        for feats, label, meta in tqdm(loader):
-            feats = feats.to(dev)
-            logits, out = model(feats)
-
-            slide_id = meta["slide_id"][0]
-            coords = get_coords(meta)
-
-            att_raw = out["attention"]
-            att_raw_vec = att_raw.squeeze(0).squeeze(-1).cpu().numpy()
-            att_soft = F.softmax(att_raw, dim=1)
-            att_soft_vec = att_soft.squeeze(0).squeeze(-1).cpu().numpy()
-
-            np.savez(
-                os.path.join(att_dir, f"{slide_id}_att_with_coords.npz"),
-                attention=att_soft_vec,
-                attention_raw=att_raw_vec,
-                coords=coords,
-            )
-
-            if "slide_embedding" in out:
-                emb = out["slide_embedding"].cpu().numpy()
-                np.save(os.path.join(emb_dir, f"{slide_id}_embedding.npy"), emb)
-
-    # Generate visual reports
-    generate_all_attention_reports(
-        base_exp_dir=fold_out,
-        wsi_dir=wsi_dir,
-        patch_size=cfg.get("patch_size", 224),
-        patch_level=1,
-        extract_region=extract_region,
-        combine_subplots=combine_subplots,
-        subplot_layout=subplot_layout,
-        use_raw=True,
-    )
-
-    print(f"✅ Done fold {fold}")
 
 
 # ---------------------------------------------------------
@@ -138,7 +13,7 @@ def run_fold(
 def run_experiment(cfg, device, extract_region, combine_subplots, subplot_layout, rerun=False):
     exp_name = cfg.get("name", cfg.get("run_key", "unknown"))
 
-    labels_csv = get_labels_csv(cfg)
+    labels_csv = cfg.get("labels_csv") or cfg.get("labels_dir")
     df = pd.read_csv(labels_csv)
     folds = sorted(df["fold"].unique())
 
@@ -156,7 +31,7 @@ def run_experiment(cfg, device, extract_region, combine_subplots, subplot_layout
     print(f"Folds: {folds}")
 
     for fold in folds:
-        run_fold(
+        run_inference_fold(
             experiment_dir,
             fold,
             cfg,

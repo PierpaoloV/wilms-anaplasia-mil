@@ -235,6 +235,104 @@ def get_coords(meta):
     return coords
 
 
+def run_inference_fold(
+    experiment_dir,
+    fold,
+    cfg,
+    device="cuda",
+    extract_region=False,
+    combine_subplots=True,
+    subplot_layout="horizontal",
+):
+    """
+    Load the best saved model for a fold, run forward pass on the validation
+    slides, save attention NPZs, and generate visual reports.
+
+    Output lives in {experiment_dir}/inference/ so it is separate from the
+    training-time artefacts in {experiment_dir}/.
+    """
+    labels_csv = cfg.get("labels_csv") or cfg.get("labels_dir")
+    features_dir = os.path.join(cfg["base_dir"], "features")
+    coord_dir    = os.path.join(cfg["base_dir"], "coordinates")
+    wsi_dir      = cfg["wsi_dir"]
+
+    df       = pd.read_csv(labels_csv)
+    fold_ids = df.loc[df["fold"] == fold, "slide_id"].astype(str).tolist()
+
+    if not fold_ids:
+        print(f"  No slides for fold {fold}")
+        return
+
+    model_path = os.path.join(experiment_dir, "models", f"mil_best_fold{fold}.pt")
+    if not os.path.exists(model_path):
+        print(f"  Model missing: {model_path}")
+        return
+
+    fold_out = os.path.join(experiment_dir, "inference")
+    att_dir  = os.path.join(fold_out, "attentions")
+    emb_dir  = os.path.join(fold_out, "embeddings")
+    for d in [fold_out, att_dir, emb_dir]:
+        os.makedirs(d, exist_ok=True)
+
+    ds     = MILSlideDataset(labels_csv, features_dir, coord_dir, slide_ids=fold_ids)
+    loader = DataLoader(ds, batch_size=1, shuffle=False)
+
+    dev   = torch.device(device if torch.cuda.is_available() else "cpu")
+    model = AttentionSingleBranch(
+        size=tuple(cfg["size"]),
+        use_dropout=cfg.get("use_dropout", False),
+        n_classes=cfg.get("n_classes", 2),
+    )
+    model.load_state_dict(torch.load(model_path, map_location=dev))
+    model.to(dev)
+    model.eval()
+
+    with torch.no_grad():
+        for feats, label, meta in tqdm(loader, desc=f"  Fold {fold} inference", leave=False):
+            feats     = feats.to(dev)
+            _, out    = model(feats)
+            slide_id  = meta["slide_id"][0]
+            coords    = get_coords(meta)
+
+            att_raw     = out["attention"]
+            att_raw_vec = att_raw.squeeze(0).squeeze(-1).cpu().numpy()
+            att_soft_vec = F.softmax(att_raw, dim=1).squeeze(0).squeeze(-1).cpu().numpy()
+
+            np.savez(
+                os.path.join(att_dir, f"{slide_id}_att_with_coords.npz"),
+                attention=att_soft_vec,
+                attention_raw=att_raw_vec,
+                coords=coords,
+            )
+
+            if "slide_embedding" in out:
+                np.save(
+                    os.path.join(emb_dir, f"{slide_id}_embedding.npy"),
+                    out["slide_embedding"].cpu().numpy(),
+                )
+
+    # results CSV lives one level up (written by cross_validate_mil)
+    results_csv = os.path.join(experiment_dir, "results", "per_slide_predictions.csv")
+
+    generate_all_attention_reports(
+        base_exp_dir=fold_out,
+        wsi_dir=wsi_dir,
+        patch_size=int(cfg.get("patch_size", 224)),
+        patch_level=int(cfg.get("patch_level", 1)),
+        vis_level=int(cfg.get("vis_level", -1)),
+        alpha=float(cfg.get("alpha", 0.6)),
+        cmap_name=cfg.get("cmap_name", "plasma"),
+        convert_to_percentiles=bool(cfg.get("convert_to_percentiles", True)),
+        max_size=int(cfg.get("max_size", 4096)),
+        use_raw=True,
+        extract_region=extract_region,
+        draw_topk=int(cfg.get("draw_topk", 20)),
+        combine_subplots=combine_subplots,
+        subplot_layout=subplot_layout,
+        results_csv=results_csv if os.path.exists(results_csv) else None,
+    )
+
+
 def cross_validate_mil(
     splits_csv,
     features_dir,
