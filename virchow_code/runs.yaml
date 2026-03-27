@@ -13,13 +13,17 @@ defaults:
   size: [1280, 512, 256]
   device: "cuda"
   seed: 42
-  save_attentions: true
   save_embeddings: true
-  top_k: 20
-  context_factor: 2.0
-  thumbnail_level: 5
-  cmap_cv2: "INFERNO"
   mode: "full"
+  # --- visualization ---
+  draw_topk: 20
+  cmap_name: "plasma"
+  alpha: 0.6
+  convert_to_percentiles: true
+  max_size: 4096
+  patch_level: 1
+  vis_level: -1
+  # report_workers: 8  # override if needed; defaults to SLURM_CPUS_PER_TASK or os.cpu_count()
 
 runs:
   baseline:
