@@ -235,21 +235,52 @@ def get_coords(meta):
     return coords
 
 
+def generate_experiment_reports(
+    experiment_dir,
+    cfg,
+    extract_region=False,
+    combine_subplots=True,
+    subplot_layout="horizontal",
+):
+    """Generate visual attention reports for all NPZs in experiment_dir/inference/."""
+    fold_out    = os.path.join(experiment_dir, "inference")
+    wsi_dir     = cfg["wsi_dir"]
+    results_csv = os.path.join(experiment_dir, "results", "per_slide_predictions.csv")
+    generate_all_attention_reports(
+        base_exp_dir=fold_out,
+        wsi_dir=wsi_dir,
+        patch_size=int(cfg.get("patch_size", 224)),
+        patch_level=int(cfg.get("patch_level", 1)),
+        vis_level=int(cfg.get("vis_level", -1)),
+        alpha=float(cfg.get("alpha", 0.6)),
+        cmap_name=cfg.get("cmap_name", "plasma"),
+        convert_to_percentiles=bool(cfg.get("convert_to_percentiles", True)),
+        max_size=int(cfg.get("max_size", 4096)),
+        use_raw=True,
+        extract_region=extract_region,
+        draw_topk=int(cfg.get("draw_topk", 20)),
+        combine_subplots=combine_subplots,
+        subplot_layout=subplot_layout,
+        results_csv=results_csv if os.path.exists(results_csv) else None,
+    )
+
+
 def run_inference_fold(
     experiment_dir,
     fold,
     cfg,
     device="cuda",
+    generate_reports=True,
     extract_region=False,
     combine_subplots=True,
     subplot_layout="horizontal",
 ):
     """
     Load the best saved model for a fold, run forward pass on the validation
-    slides, save attention NPZs, and generate visual reports.
-
-    Output lives in {experiment_dir}/inference/ so it is separate from the
-    training-time artefacts in {experiment_dir}/.
+    slides, and save attention NPZs.  When generate_reports=True (default)
+    also renders visual reports immediately after.  Pass generate_reports=False
+    when looping over all folds so that report generation happens once at the
+    end rather than once per fold.
     """
     labels_csv = cfg.get("labels_csv") or cfg.get("labels_dir")
     features_dir = os.path.join(cfg["base_dir"], "features")
@@ -311,26 +342,14 @@ def run_inference_fold(
                     out["slide_embedding"].cpu().numpy(),
                 )
 
-    # results CSV lives one level up (written by cross_validate_mil)
-    results_csv = os.path.join(experiment_dir, "results", "per_slide_predictions.csv")
-
-    generate_all_attention_reports(
-        base_exp_dir=fold_out,
-        wsi_dir=wsi_dir,
-        patch_size=int(cfg.get("patch_size", 224)),
-        patch_level=int(cfg.get("patch_level", 1)),
-        vis_level=int(cfg.get("vis_level", -1)),
-        alpha=float(cfg.get("alpha", 0.6)),
-        cmap_name=cfg.get("cmap_name", "plasma"),
-        convert_to_percentiles=bool(cfg.get("convert_to_percentiles", True)),
-        max_size=int(cfg.get("max_size", 4096)),
-        use_raw=True,
-        extract_region=extract_region,
-        draw_topk=int(cfg.get("draw_topk", 20)),
-        combine_subplots=combine_subplots,
-        subplot_layout=subplot_layout,
-        results_csv=results_csv if os.path.exists(results_csv) else None,
-    )
+    if generate_reports:
+        generate_experiment_reports(
+            experiment_dir,
+            cfg,
+            extract_region=extract_region,
+            combine_subplots=combine_subplots,
+            subplot_layout=subplot_layout,
+        )
 
 
 def cross_validate_mil(

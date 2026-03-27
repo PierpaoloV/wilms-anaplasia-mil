@@ -3,7 +3,7 @@ import argparse
 import yaml
 import pandas as pd
 
-from mil_modules import run_inference_fold
+from mil_modules import run_inference_fold, generate_experiment_reports
 from mil_main import load_config
 
 
@@ -36,10 +36,16 @@ def run_experiment(cfg, device, extract_region, combine_subplots, subplot_layout
             fold,
             cfg,
             device=device,
-            extract_region=extract_region,
-            combine_subplots=combine_subplots,
-            subplot_layout=subplot_layout,
+            generate_reports=False,
         )
+
+    generate_experiment_reports(
+        experiment_dir,
+        cfg,
+        extract_region=extract_region,
+        combine_subplots=combine_subplots,
+        subplot_layout=subplot_layout,
+    )
 
 
 # ---------------------------------------------------------
