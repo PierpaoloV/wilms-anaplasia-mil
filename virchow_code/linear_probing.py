@@ -17,7 +17,10 @@ import torch.nn as nn
 import torch.optim as optim
 from abc import ABC, abstractmethod
 from pathlib import Path
-from tqdm import tqdm
+from rich.progress import Progress, BarColumn, TextColumn, MofNCompleteColumn, TimeElapsedColumn, SpinnerColumn
+from rich.console import Console
+
+console = Console()
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
     roc_auc_score, roc_curve, auc, confusion_matrix, ConfusionMatrixDisplay,
@@ -142,31 +145,43 @@ def _train_loop(model, shot_features, shot_labels, optimizer, num_epochs, patien
     device = shot_features.device
     best_loss, best_epoch, best_state = float("inf"), 0, model.state_dict()
 
-    for epoch in tqdm(range(num_epochs), desc="Training", unit="epoch", leave=True):
-        model.train()
-        optimizer.zero_grad()
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(bar_width=28),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("Training", total=num_epochs)
+        for epoch in range(num_epochs):
+            model.train()
+            optimizer.zero_grad()
 
-        out = model(shot_features)
-        logits = out[0] if has_aux_output else out
+            out = model(shot_features)
+            logits = out[0] if has_aux_output else out
 
-        probs = torch.softmax(logits, dim=1)
-        preds = torch.argmax(probs, dim=1)
-        confidences = probs[torch.arange(len(preds)), preds]
+            probs = torch.softmax(logits, dim=1)
+            preds = torch.argmax(probs, dim=1)
+            confidences = probs[torch.arange(len(preds)), preds]
 
-        correct = (preds == shot_labels).float()
-        penalty = 1.0 + penalty_factor * (1.0 - correct) * confidences
-        ce_loss = nn.CrossEntropyLoss(reduction="none")(logits, shot_labels)
-        loss = (penalty * ce_loss).mean()
+            correct = (preds == shot_labels).float()
+            penalty = 1.0 + penalty_factor * (1.0 - correct) * confidences
+            ce_loss = nn.CrossEntropyLoss(reduction="none")(logits, shot_labels)
+            loss = (penalty * ce_loss).mean()
 
-        loss.backward()
-        optimizer.step()
+            loss.backward()
+            optimizer.step()
 
-        epoch_loss = loss.item()
-        if epoch_loss < best_loss:
-            best_loss, best_epoch, best_state = epoch_loss, epoch, model.state_dict()
-        elif epoch - best_epoch > patience:
-            tqdm.write(f"Early stopping at epoch {epoch + 1}")
-            break
+            epoch_loss = loss.item()
+            if epoch_loss < best_loss:
+                best_loss, best_epoch, best_state = epoch_loss, epoch, model.state_dict()
+            elif epoch - best_epoch > patience:
+                progress.console.print(f"  Early stopping at epoch {epoch + 1}")
+                break
+
+            progress.advance(task)
 
     model.load_state_dict(best_state)
     return model
