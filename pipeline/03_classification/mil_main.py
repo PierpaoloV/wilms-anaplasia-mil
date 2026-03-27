@@ -197,24 +197,33 @@ def main():
                     torch.cuda.empty_cache()
                     gc.collect()
 
-            # Collect mean metrics regardless of whether we just ran or skipped
+            # Collect metrics regardless of whether we just ran or skipped
             if summary_path.exists():
-                row = pd.read_csv(summary_path, index_col=0).loc["mean"].to_dict()
-                row["run_name"] = cfg["name"]
-                for k, v in cfg.items():
-                    if isinstance(v, (int, float, str, bool, list)):
-                        row[k] = str(v)
+                df_s = pd.read_csv(summary_path, index_col=0)
+                labels_path = cfg.get("labels_csv") or cfg.get("labels_dir", "")
+                size = cfg.get("size", [])
+                row = {
+                    "run_name":       cfg["name"],
+                    "dataset":        "yes_only" if "selected_yes" in str(labels_path) else "all",
+                    "weighted":       cfg.get("weighted", False),
+                    "penalty_factor": cfg.get("penalty_factor", 0.0),
+                    "architecture":   "→".join(str(s) for s in size),
+                    "f1":             round(df_s.loc["mean", "f1"], 4),
+                    "f1_std":         round(df_s.loc["std",  "f1"], 4),
+                    "auc":            round(df_s.loc["mean", "auc"], 4),
+                    "auc_std":        round(df_s.loc["std",  "auc"], 4),
+                    "precision":      round(df_s.loc["mean", "precision"], 4),
+                    "precision_std":  round(df_s.loc["std",  "precision"], 4),
+                }
                 all_summaries.append(row)
 
         # Save combined results to output_base_dir
         if all_summaries and output_base_dir:
             combined_df = pd.DataFrame(all_summaries)
-            cols = ["run_name"] + [c for c in combined_df.columns if c != "run_name"]
-            combined_df = combined_df[cols]
             combined_path = Path(output_base_dir) / "combined_results.csv"
             combined_df.to_csv(combined_path, index=False)
             print(f"\n📊 Combined results saved to: {combined_path}")
-            print(combined_df[["run_name", "accuracy", "f1", "auc"]].to_string(index=False))
+            print(combined_df.to_string(index=False))
 
         print("\n✅ All experiments completed successfully.")
 
