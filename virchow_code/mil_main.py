@@ -6,7 +6,7 @@ import gc
 import torch
 import pandas as pd
 from pathlib import Path
-from mil_modules import cross_validate_mil, generate_all_attention_reports
+from mil_modules import cross_validate_mil, run_inference_fold
 
 # --------------------------------------------------------------------
 # HELPER
@@ -107,27 +107,16 @@ def run_experiment(cfg):
     # output_dir = f"/opt/app/user/postdoc/Anaplasia_Classification/virchow/experiments_complete/{cfg['name']}"
     os.makedirs(output_dir, exist_ok=True)
     if cfg.get("only_reports", False):
-        print("🖼️ only_reports=True → skipping training, generating attention reports only")
-        generate_all_attention_reports(
-            base_exp_dir=output_dir,
-            wsi_dir=cfg["wsi_dir"],
-            patch_size=int(cfg.get("patch_size", 224)),
-            patch_level=1,
-            vis_level=int(cfg.get("vis_level", -1)),
-            alpha=float(cfg.get("alpha", 0.6)),
-            cmap_name=cfg.get("cmap_name", "plasma"),
-            convert_to_percentiles=bool(cfg.get("convert_to_percentiles", True)),
-            max_size=int(cfg.get("max_size", 4096)),
-            use_raw=bool(cfg.get("use_raw", True)),
-            draw_topk=int(cfg.get("draw_topk", 20)),
-            combine_subplots=bool(cfg.get("combine_subplots", True)),
-            subplot_layout=cfg.get("subplot_layout", "horizontal"),
-            results_csv=os.path.join(output_dir, "results", "per_slide_predictions.csv"),
-        )
+        print("🖼️ only_reports=True → skipping training, regenerating inference reports")
+        df    = pd.read_csv(cfg["labels_csv"])
+        folds = sorted(df["fold"].unique())
+        for fold in folds:
+            print(f"\n--- Fold {fold} ---")
+            run_inference_fold(output_dir, fold, cfg, device=str(device))
         return
 
     try:
-        # --- Run cross-validation ---
+        # --- Run cross-validation (trains all folds, saves best models + results CSV) ---
         results_df, metrics_df, summary_df = cross_validate_mil(
             splits_csv=cfg["labels_csv"],
             features_dir=os.path.join(cfg["base_dir"], "features/"),
@@ -143,24 +132,13 @@ def run_experiment(cfg):
             weighted=cfg.get("weighted", False),
         )
 
-        # --- Generate attention heatmaps ---
+        # --- Generate attention heatmaps via the shared inference pipeline ---
         if cfg.get("mode", "full") == "full":
-            generate_all_attention_reports(
-                base_exp_dir=output_dir,
-                wsi_dir=cfg["wsi_dir"],
-                patch_size=int(cfg.get("patch_size", 224)),
-                patch_level=1,
-                vis_level=int(cfg.get("vis_level", -1)),
-                alpha=float(cfg.get("alpha", 0.6)),
-                cmap_name=cfg.get("cmap_name", "plasma"),
-                convert_to_percentiles=bool(cfg.get("convert_to_percentiles", True)),
-                max_size=int(cfg.get("max_size", 4096)),
-                use_raw=bool(cfg.get("use_raw", True)),
-                draw_topk=int(cfg.get("draw_topk", 20)),
-                combine_subplots=bool(cfg.get("combine_subplots", True)),
-                subplot_layout=cfg.get("subplot_layout", "horizontal"),
-                results_csv=os.path.join(output_dir, "results", "per_slide_predictions.csv"),
-            )
+            df    = pd.read_csv(cfg["labels_csv"])
+            folds = sorted(df["fold"].unique())
+            for fold in folds:
+                print(f"\n--- Generating inference reports: fold {fold} ---")
+                run_inference_fold(output_dir, fold, cfg, device=str(device))
 
         print(f"✅ Finished {cfg['name']}")
         torch.cuda.empty_cache()
