@@ -17,7 +17,14 @@ from sklearn.metrics import (
     roc_auc_score, confusion_matrix, ConfusionMatrixDisplay
 )
 
-from tqdm import tqdm
+from rich.progress import (
+    Progress, BarColumn, TextColumn, TimeElapsedColumn,
+    MofNCompleteColumn, SpinnerColumn, track,
+)
+from rich.console import Console
+from rich.table import Table
+
+console = Console()
 from collections import Counter
 from matplotlib import pyplot as plt
 from matplotlib.colors import Normalize
@@ -319,7 +326,7 @@ def run_inference_fold(
     model.eval()
 
     with torch.no_grad():
-        for feats, label, meta in tqdm(loader, desc=f"  Fold {fold} inference", leave=False):
+        for feats, label, meta in track(loader, description=f"  Fold {fold} inference", console=console):
             feats     = feats.to(dev)
             _, out    = model(feats)
             slide_id  = meta["slide_id"][0]
@@ -385,8 +392,20 @@ def cross_validate_mil(
     fold_metrics = []
     all_train_losses, all_val_losses = [], []
 
-    for fold in range(1, 6):
-        print(f"\n===== FOLD {fold} =====")
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(bar_width=28),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        console=console,
+        refresh_per_second=5,
+    ) as progress:
+
+      fold_task = progress.add_task("[bold cyan]Cross-validation", total=5)
+
+      for fold in range(1, 6):
+        progress.console.rule(f"[bold]Fold {fold} / 5")
 
         val_ids = splits.loc[splits["fold"] == fold, "slide_id"].tolist()
         train_ids = splits.loc[splits["fold"] != fold, "slide_id"].tolist()
@@ -406,7 +425,9 @@ def cross_validate_mil(
             weights = np.array([total / counts[c] for c in sorted(counts)])
             weights = weights / weights.sum() * len(weights)
             class_weights = torch.tensor(weights, dtype=torch.float32).to(device)
-            print(f"Fold {fold} class counts: {dict(counts)} → weights = {np.round(weights, 2).tolist()}")
+            progress.console.print(
+                f"  Class counts: {dict(counts)} → weights = {np.round(weights, 2).tolist()}"
+            )
         else:
             class_weights = None
 
@@ -416,15 +437,20 @@ def cross_validate_mil(
         best_val_loss = float("inf")
         best_model_path = f"{output_dir}/models/mil_best_fold{fold}.pt"
 
-        print(f"🧠 Using penalty_factor={penalty_factor}")
+        progress.console.print(f"  penalty_factor={penalty_factor}  lr={lr}")
         train_losses, val_losses = [], []
+
+        epoch_task = progress.add_task(f"[blue]Fold {fold} epochs", total=epochs)
 
         # === Training ===
         for epoch in range(1, epochs + 1):
             model.train()
             running_loss = 0.0
 
-            for feats, label, _ in tqdm(train_loader, desc=f"[Fold {fold} | Epoch {epoch}] Train", leave=False):
+            train_task = progress.add_task(
+                f"[green]  Epoch {epoch:2d}/{epochs} train", total=len(train_loader)
+            )
+            for feats, label, _ in train_loader:
                 feats, label = feats.to(device), label.to(device)
                 if label.ndim == 0:
                     label = label.unsqueeze(0)
@@ -446,6 +472,8 @@ def cross_validate_mil(
                 loss.backward()
                 optimizer.step()
                 running_loss += loss.item()
+                progress.advance(train_task)
+            progress.remove_task(train_task)
 
             train_loss = running_loss / len(train_loader)
             train_losses.append(train_loss)
@@ -455,8 +483,11 @@ def cross_validate_mil(
             val_loss = 0.0
             y_true, y_pred, y_prob = [], [], []
 
+            val_task = progress.add_task(
+                f"[yellow]  Epoch {epoch:2d}/{epochs} val  ", total=len(val_loader)
+            )
             with torch.no_grad():
-                for feats, label, meta in tqdm(val_loader, desc=f"[Fold {fold} | Epoch {epoch}] Val", leave=False):
+                for feats, label, meta in val_loader:
                     feats, label = feats.to(device), label.to(device)
                     if label.ndim == 0:
                         label = label.unsqueeze(0)
@@ -470,7 +501,6 @@ def cross_validate_mil(
                     true = int(label.cpu().numpy()[0])
                     slide_id = meta["slide_id"][0]
 
-                    # ✅ Save attention + coords
                     _save_attention(output_dir, slide_id, out, meta)
 
                     if save_embeddings and "slide_embedding" in out:
@@ -480,21 +510,35 @@ def cross_validate_mil(
                     y_true.append(true)
                     y_pred.append(pred)
                     y_prob.append(probs[1])
+                    progress.advance(val_task)
+            progress.remove_task(val_task)
 
-                val_loss /= len(val_loader)
-                val_losses.append(val_loss)
+            val_loss /= len(val_loader)
+            val_losses.append(val_loss)
 
             # === Metrics ===
             acc = accuracy_score(y_true, y_pred)
             f1 = f1_score(y_true, y_pred, zero_division=0)
             auc_val = roc_auc_score(y_true, y_prob) if len(np.unique(y_true)) > 1 else np.nan
-            print(f"Fold {fold} | Epoch {epoch}: TrainLoss={train_loss:.4f} | ValLoss={val_loss:.4f} | "
-                  f"ACC={acc:.3f} | F1={f1:.3f} | AUC={auc_val:.3f}")
 
-            if val_loss < best_val_loss:
+            saved = val_loss < best_val_loss
+            progress.console.print(
+                f"  Epoch {epoch:2d}/{epochs} | "
+                f"Train [red]{train_loss:.4f}[/red] "
+                f"Val [yellow]{val_loss:.4f}[/yellow] | "
+                f"ACC [green]{acc:.3f}[/green] "
+                f"F1 [cyan]{f1:.3f}[/cyan] "
+                f"AUC [magenta]{auc_val:.3f}[/magenta]"
+                + (" [bold green]✓ best[/bold green]" if saved else "")
+            )
+
+            if saved:
                 best_val_loss = val_loss
                 torch.save(model.state_dict(), best_model_path)
 
+            progress.advance(epoch_task)
+
+        progress.remove_task(epoch_task)
         all_train_losses.append(train_losses)
         all_val_losses.append(val_losses)
 
@@ -503,8 +547,11 @@ def cross_validate_mil(
         model.eval()
         y_true, y_pred, y_prob = [], [], []
 
+        final_task = progress.add_task(
+            f"[bold]  Final eval fold {fold}", total=len(val_loader)
+        )
         with torch.no_grad():
-            for feats, label, meta in tqdm(val_loader, desc=f"[Fold {fold}] Final Eval", leave=False):
+            for feats, label, meta in val_loader:
                 feats = feats.to(device)
                 logits, out = model(feats)
                 probs = F.softmax(logits, dim=1).cpu().numpy()[0]
@@ -512,11 +559,8 @@ def cross_validate_mil(
                 true = int(label.cpu().numpy()[0])
                 slide_id = meta["slide_id"][0]
 
-                # ✅ Save embedding and attention one more time
                 if save_embeddings and "slide_embedding" in out:
-                    # emb = out["slide_embedding"].cpu().numpy()
                     torch.save(out["slide_embedding"].cpu(), f"{output_dir}/embeddings/{slide_id}_embedding.pt")
-                    # np.save(f"{output_dir}/embeddings/{slide_id}_embedding.npy", emb)
 
                 _save_attention(output_dir, slide_id, out, meta)
 
@@ -530,6 +574,8 @@ def cross_validate_mil(
                     "pred_label": pred,
                     "prob_anaplasia": probs[1],
                 })
+                progress.advance(final_task)
+        progress.remove_task(final_task)
 
         # === Confusion matrix per fold ===
         cm = confusion_matrix(y_true, y_pred)
@@ -557,6 +603,8 @@ def cross_validate_mil(
         plt.legend()
         plt.savefig(f"{output_dir}/results/plots/losses_fold{fold}.png", dpi=200, bbox_inches="tight")
         plt.close()
+
+        progress.advance(fold_task)
 
     # === Save outputs ===
     results_df = pd.DataFrame(all_results)
@@ -590,8 +638,16 @@ def cross_validate_mil(
     plt.savefig(f"{output_dir}/results/plots/losses_average.png", dpi=200, bbox_inches="tight")
     plt.close()
 
-    print("\n✅ Cross-validation complete.")
-    print(summary_df)
+    table = Table(title="Cross-validation summary", show_header=True, header_style="bold magenta")
+    for col in ["metric", "mean", "std"]:
+        table.add_column(col)
+    for metric in summary_df.columns:
+        table.add_row(
+            metric,
+            f"{summary_df.loc['mean', metric]:.4f}",
+            f"{summary_df.loc['std', metric]:.4f}",
+        )
+    console.print(table)
 
     return results_df, metrics_df, summary_df
 
@@ -1075,9 +1131,9 @@ def generate_all_attention_reports(
     pred_map = _load_predictions(base_exp_dir, results_csv)
 
     files = [f for f in os.listdir(att_dir) if f.endswith(".npz")]
-    print(f"Found {len(files)} attention files")
+    console.print(f"Found [bold]{len(files)}[/bold] attention files")
 
-    for fname in tqdm(files, desc="Generating attention reports"):
+    for fname in track(files, description="Generating attention reports", console=console):
         data = np.load(os.path.join(att_dir, fname))
         coords     = data["coords"].astype(np.float32)
         scores_raw = (
