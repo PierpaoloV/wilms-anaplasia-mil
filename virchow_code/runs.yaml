@@ -1,7 +1,7 @@
 defaults:
-  output_base_dir: "/opt/app/user/postdoc/Anaplasia_Classification/virchow/experiments_complete/"
-  base_dir: "/opt/app/user/postdoc/Anaplasia_Classification/virchow/virchow_features/2025-10-08_14_17/"
-  labels_csv: "/opt/app/user/postdoc/Anaplasia_Classification/csvs/splits_updated.csv"
+  output_base_dir: "/home/user/experiments_complete"
+  base_dir: "/data/pathology/projects/pierpaolo/postdoc/Anaplasia_Classification/virchow/virchow_features/2025-10-08_14_17/"
+  labels_csv: "/data/pathology/projects/pierpaolo/postdoc/Anaplasia_Classification/csvs/splits_updated.csv"
   wsi_dir: "/data/pa_cpgarchive/archives/kidney/Wilms_Tumor/Images/"
   patch_size: 224
   n_classes: 2
@@ -20,7 +20,7 @@ defaults:
   cmap_name: "plasma"
   alpha: 0.6
   convert_to_percentiles: true
-  max_size: 4096
+  max_size: 8192
   patch_level: 1
   vis_level: -1
   # report_workers: 8  # override if needed; defaults to SLURM_CPUS_PER_TASK or os.cpu_count()
