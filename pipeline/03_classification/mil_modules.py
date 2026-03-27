@@ -64,11 +64,16 @@ class MILSlideDataset(Dataset):
     def _load_coords(self, slide_id):
         npy_path = self.coord_dir / f"{slide_id}.npy"
         if not npy_path.exists():
-            print('Coordinates do not exists?')
+            print(f"Coordinates not found: {npy_path}")
             return None
-        arr = np.load(npy_path)
-        if "x" in arr.dtype.names and "y" in arr.dtype.names:
+        arr = np.load(npy_path, allow_pickle=False)
+        # Structured array with named x/y fields (legacy format)
+        if arr.dtype.names and "x" in arr.dtype.names and "y" in arr.dtype.names:
             return np.column_stack((arr["x"], arr["y"])).astype(np.float32)
+        # Plain (N, 2) array as output by slide2vec
+        if arr.ndim == 2 and arr.shape[1] >= 2:
+            return arr[:, :2].astype(np.float32)
+        print(f"Unrecognised coordinate format for {slide_id}: shape={arr.shape} dtype={arr.dtype}")
         return None
 
     def _encode_label(self, diagnosis: str, binary: bool = True) -> int:
