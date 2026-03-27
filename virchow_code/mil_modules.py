@@ -269,6 +269,7 @@ def generate_experiment_reports(
         combine_subplots=combine_subplots,
         subplot_layout=subplot_layout,
         results_csv=results_csv if os.path.exists(results_csv) else None,
+        num_workers=cfg.get("report_workers", None),
     )
 
 
@@ -1081,6 +1082,111 @@ def wsi_attention_heatmap(
 _LABEL_NAMES = {0: "Not Anaplasia", 1: "Anaplasia"}
 
 
+def _render_one_slide(job):
+    """
+    Render the attention report for a single slide.
+    Runs in a subprocess — must not reference Rich console or unpicklable state.
+    Returns (slide_id, error_str_or_None).
+    """
+    import numpy as np
+    import openslide
+    from PIL import Image
+    import os
+
+    fname            = job["fname"]
+    att_dir          = job["att_dir"]
+    out_dir          = job["out_dir"]
+    wsi_dir          = job["wsi_dir"]
+    pred_map         = job["pred_map"]
+    vis_level        = job["vis_level"]
+    patch_level      = job["patch_level"]
+    patch_size       = job["patch_size"]
+    alpha            = job["alpha"]
+    cmap_name        = job["cmap_name"]
+    convert_to_pct   = job["convert_to_percentiles"]
+    max_size         = job["max_size"]
+    use_raw          = job["use_raw"]
+    extract_region   = job["extract_region"]
+    draw_topk        = job["draw_topk"]
+    combine_subplots = job["combine_subplots"]
+    subplot_layout   = job["subplot_layout"]
+
+    data = np.load(os.path.join(att_dir, fname))
+    coords = data["coords"].astype(np.float32)
+    scores_raw = (
+        data["attention_raw"].astype(np.float32).reshape(-1)
+        if use_raw and "attention_raw" in data
+        else data["attention"].astype(np.float32).reshape(-1)
+    )
+
+    slide_id = fname.replace("_att_with_coords.npz", "")
+
+    try:
+        slide_path = _find_wsi_path(wsi_dir, slide_id)
+    except FileNotFoundError as e:
+        return slide_id, str(e)
+
+    try:
+        heatmap_img, _ = wsi_attention_heatmap(
+            slide_path=slide_path,
+            coords_lvl0=coords,
+            scores_raw=scores_raw,
+            vis_level=vis_level,
+            patch_level=patch_level,
+            patch_size=patch_size,
+            alpha=alpha,
+            cmap_name=cmap_name,
+            convert_to_percentiles=convert_to_pct,
+            max_size=max_size,
+            draw_topk=draw_topk,
+        )
+
+        wsi = openslide.open_slide(slide_path)
+        if extract_region:
+            grid_img = _extract_top_regions_grid(
+                wsi=wsi, coords_lvl0=coords, scores=scores_raw,
+                k=6, patch_level=patch_level, patch_size=patch_size,
+                region_size=1024, grid=(3, 2), pad=8, cmap_name=cmap_name,
+            )
+        else:
+            grid_img, _ = _extract_top_patches_grid(
+                wsi=wsi, coords_lvl0=coords, scores=scores_raw,
+                k=draw_topk, patch_level=patch_level, patch_size=patch_size,
+                grid=(4, 5), pad=6, cmap_name=cmap_name,
+            )
+        wsi.close()
+
+        title = _build_title(slide_id, pred_map)
+
+        if combine_subplots:
+            combined = _combine_subplot(
+                heatmap_img, grid_img, layout=subplot_layout, pad=30, title=title,
+            )
+            if max(combined.size) > 9000:
+                f = 9000 / max(combined.size)
+                combined = combined.resize(
+                    (int(combined.width * f), int(combined.height * f)), Image.BILINEAR
+                )
+            combined.save(
+                os.path.join(out_dir, f"{slide_id}_combined.jpg"),
+                quality=92, optimize=True, progressive=True,
+            )
+        else:
+            heatmap_img.save(
+                os.path.join(out_dir, f"{slide_id}_heatmap_top{draw_topk}.jpg"),
+                quality=92, optimize=True, progressive=True,
+            )
+            grid_img.save(
+                os.path.join(out_dir, f"{slide_id}_top{draw_topk}_patches.jpg"),
+                quality=92, optimize=True, progressive=True,
+            )
+
+        return slide_id, None
+
+    except Exception as e:
+        return slide_id, str(e)
+
+
 def _load_predictions(base_exp_dir, results_csv=None):
     """Load per-slide predictions from CSV. Returns dict: slide_id -> {true_label, pred_label, prob}."""
     csv_path = results_csv or os.path.join(base_exp_dir, "results", "per_slide_predictions.csv")
@@ -1123,107 +1229,54 @@ def generate_all_attention_reports(
     combine_subplots=True,
     subplot_layout="horizontal",
     results_csv=None,
+    num_workers=None,
 ):
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
     att_dir = os.path.join(base_exp_dir, "attentions")
     out_dir = os.path.join(base_exp_dir, "visual_reports")
     os.makedirs(out_dir, exist_ok=True)
 
     pred_map = _load_predictions(base_exp_dir, results_csv)
+    files    = [f for f in os.listdir(att_dir) if f.endswith(".npz")]
+    n        = len(files)
+    workers  = min(num_workers or os.cpu_count() or 1, n)
 
-    files = [f for f in os.listdir(att_dir) if f.endswith(".npz")]
-    console.print(f"Found [bold]{len(files)}[/bold] attention files")
+    console.print(f"Found [bold]{n}[/bold] attention files — using [bold]{workers}[/bold] workers")
 
-    for fname in track(files, description="Generating attention reports", console=console):
-        data = np.load(os.path.join(att_dir, fname))
-        coords     = data["coords"].astype(np.float32)
-        scores_raw = (
-            data["attention_raw"].astype(np.float32).reshape(-1)
-            if use_raw and "attention_raw" in data
-            else data["attention"].astype(np.float32).reshape(-1)
-        )
+    shared = dict(
+        att_dir=att_dir, out_dir=out_dir, wsi_dir=wsi_dir, pred_map=pred_map,
+        vis_level=vis_level, patch_level=patch_level, patch_size=patch_size,
+        alpha=alpha, cmap_name=cmap_name, convert_to_percentiles=convert_to_percentiles,
+        max_size=max_size, use_raw=use_raw, extract_region=extract_region,
+        draw_topk=draw_topk, combine_subplots=combine_subplots,
+        subplot_layout=subplot_layout,
+    )
+    jobs = [{**shared, "fname": fname} for fname in files]
 
-        slide_id = fname.replace("_att_with_coords.npz", "")
-        try:
-            slide_path = _find_wsi_path(wsi_dir, slide_id)
-        except FileNotFoundError:
-            print(f"Slide not found: {slide_id}")
-            continue
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(bar_width=28),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Generating attention reports", total=n)
 
-        try:
-            # --- heatmap with top-k boxes ---
-            heatmap_img, _ = wsi_attention_heatmap(
-                slide_path=slide_path,
-                coords_lvl0=coords,
-                scores_raw=scores_raw,
-                vis_level=vis_level,
-                patch_level=patch_level,
-                patch_size=patch_size,
-                alpha=alpha,
-                cmap_name=cmap_name,
-                convert_to_percentiles=convert_to_percentiles,
-                max_size=max_size,
-                draw_topk=draw_topk,
-            )
+        if workers <= 1:
+            for job in jobs:
+                slide_id, err = _render_one_slide(job)
+                if err:
+                    progress.console.print(f"[red]  Failed {slide_id}: {err}")
+                progress.advance(task)
+        else:
+            with ProcessPoolExecutor(max_workers=workers) as pool:
+                futures = {pool.submit(_render_one_slide, job): job["fname"] for job in jobs}
+                for future in as_completed(futures):
+                    slide_id, err = future.result()
+                    if err:
+                        progress.console.print(f"[red]  Failed {slide_id}: {err}")
+                    progress.advance(task)
 
-            # --- ranked patch / region grid ---
-            wsi = openslide.open_slide(slide_path)
-            if extract_region:
-                grid_img = _extract_top_regions_grid(
-                    wsi=wsi,
-                    coords_lvl0=coords,
-                    scores=scores_raw,
-                    k=6,
-                    patch_level=patch_level,
-                    patch_size=patch_size,
-                    region_size=1024,
-                    grid=(3, 2),
-                    pad=8,
-                    cmap_name=cmap_name,
-                )
-            else:
-                grid_img, _ = _extract_top_patches_grid(
-                    wsi=wsi,
-                    coords_lvl0=coords,
-                    scores=scores_raw,
-                    k=draw_topk,
-                    patch_level=patch_level,
-                    patch_size=patch_size,
-                    grid=(4, 5),
-                    pad=6,
-                    cmap_name=cmap_name,
-                )
-            wsi.close()
-
-            title = _build_title(slide_id, pred_map)
-
-            if combine_subplots:
-                combined = _combine_subplot(
-                    heatmap_img, grid_img,
-                    layout=subplot_layout,
-                    pad=30,
-                    title=title,
-                )
-                if max(combined.size) > 9000:
-                    f = 9000 / max(combined.size)
-                    combined = combined.resize(
-                        (int(combined.width * f), int(combined.height * f)), Image.BILINEAR
-                    )
-                combined.save(
-                    os.path.join(out_dir, f"{slide_id}_combined.jpg"),
-                    quality=92, optimize=True, progressive=True,
-                )
-            else:
-                heatmap_img.save(
-                    os.path.join(out_dir, f"{slide_id}_heatmap_top{draw_topk}.jpg"),
-                    quality=92, optimize=True, progressive=True,
-                )
-                grid_img.save(
-                    os.path.join(out_dir, f"{slide_id}_top{draw_topk}_patches.jpg"),
-                    quality=92, optimize=True, progressive=True,
-                )
-
-        except Exception as e:
-            print(f"Failed for {slide_id}: {e}")
-            continue
-
-    print("Attention reports generated.")
+    console.print("[bold green]Attention reports generated.")
