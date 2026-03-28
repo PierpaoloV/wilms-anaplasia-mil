@@ -381,6 +381,7 @@ def cross_validate_mil(
     save_embeddings=True,
     weight_decay=1e-4,
     gmean_threshold=0.55,
+    logger=None,
 ):
     """
     Perform 5-fold cross-validation using AttentionSingleBranch (MIL),
@@ -423,6 +424,8 @@ def cross_validate_mil(
             f"  [dim]train: {len(train_ids)} slides, {train_pos} pos  |  "
             f"val: {len(val_ids)} slides, {val_pos} pos[/dim]"
         )
+        if logger:
+            logger.info(f"--- Fold {fold} / 5 | train: {len(train_ids)} slides, {train_pos} pos | val: {len(val_ids)} slides, {val_pos} pos ---")
 
         train_dataset = MILSlideDataset(splits_csv, features_dir, coord_dir, slide_ids=train_ids)
         val_dataset   = MILSlideDataset(splits_csv, features_dir, coord_dir, slide_ids=val_ids)
@@ -538,6 +541,15 @@ def cross_validate_mil(
             auc_val = roc_auc_score(y_true, y_prob) if len(np.unique(y_true)) > 1 else np.nan
 
             saved = (not np.isnan(auc_val)) and (auc_val > best_val_auc) and (gmean >= gmean_threshold)
+            epoch_line = (
+                f"  Epoch {epoch:2d}/{epochs} | "
+                f"Train {train_loss:.4f} "
+                f"Val {val_loss:.4f} | "
+                f"Gmean {gmean:.3f} "
+                f"Sens {sens:.3f} "
+                f"AUC {auc_val:.3f}"
+                + (" ✓ best" if saved else "")
+            )
             progress.console.print(
                 f"  Epoch {epoch:2d}/{epochs} | "
                 f"Train [red]{train_loss:.4f}[/red] "
@@ -547,6 +559,8 @@ def cross_validate_mil(
                 f"AUC [magenta]{auc_val:.3f}[/magenta]"
                 + (" [bold green]✓ best[/bold green]" if saved else "")
             )
+            if logger:
+                logger.info(epoch_line)
 
             if saved:
                 best_val_auc = auc_val
@@ -608,6 +622,8 @@ def cross_validate_mil(
         auc_val = roc_auc_score(y_true, y_prob) if len(np.unique(y_true)) > 1 else np.nan
 
         fold_metrics.append({"fold": fold, "precision": prec, "sensitivity": rec, "f1": f1, "auc": auc_val})
+        if logger:
+            logger.info(f"Fold {fold} final | precision={prec:.4f} sensitivity={rec:.4f} f1={f1:.4f} auc={auc_val:.4f}")
 
         # === Loss plot per fold ===
         plt.figure()
