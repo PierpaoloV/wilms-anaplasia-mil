@@ -620,8 +620,10 @@ def cross_validate_mil(
     metrics_df = pd.DataFrame(fold_metrics)
     summary = metrics_df.mean(numeric_only=True).to_dict()
     summary_std = metrics_df.std(numeric_only=True).to_dict()
+    summary_median = metrics_df.median(numeric_only=True).to_dict()
     summary_df = pd.DataFrame([summary], index=["mean"])
     summary_df.loc["std"] = summary_std
+    summary_df.loc["median"] = summary_median
 
     summary_df.to_csv(f"{output_dir}/results/summary.csv")
     metrics_df.to_csv(f"{output_dir}/results/per_fold_metrics.csv", index=False)
@@ -646,13 +648,14 @@ def cross_validate_mil(
     plt.close()
 
     table = Table(title="Cross-validation summary", show_header=True, header_style="bold magenta")
-    for col in ["metric", "mean", "std"]:
+    for col in ["metric", "mean", "std", "median"]:
         table.add_column(col)
     for metric in summary_df.columns:
         table.add_row(
             metric,
             f"{summary_df.loc['mean', metric]:.4f}",
             f"{summary_df.loc['std', metric]:.4f}",
+            f"{summary_df.loc['median', metric]:.4f}",
         )
     console.print(table)
 
