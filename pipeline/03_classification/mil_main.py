@@ -3,6 +3,7 @@ import argparse
 import yaml
 import os
 import gc
+import logging
 import torch
 import pandas as pd
 from pathlib import Path
@@ -116,6 +117,18 @@ def run_experiment(cfg):
         generate_experiment_reports(output_dir, cfg)
         return
 
+    # --- Set up training log ---
+    log_path = Path(output_dir) / "training.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    logger = logging.getLogger(cfg["name"])
+    logger.setLevel(logging.INFO)
+    logger.handlers.clear()
+    fh = logging.FileHandler(log_path, mode="w")
+    fh.setFormatter(logging.Formatter("%(asctime)s  %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+    logger.addHandler(fh)
+    logger.info(f"Experiment: {cfg['name']}")
+    logger.info(f"Config: { {k: v for k, v in cfg.items() if k not in ('output_dir','output_base_dir','wsi_dir')} }")
+
     try:
         # --- Run cross-validation (trains all folds, saves best models + results CSV) ---
         results_df, metrics_df, summary_df = cross_validate_mil(
@@ -133,6 +146,7 @@ def run_experiment(cfg):
             weighted=cfg.get("weighted", False),
             weight_decay=float(cfg.get("weight_decay", 1e-4)),
             gmean_threshold=float(cfg.get("gmean_threshold", 0.55)),
+            logger=logger,
         )
 
         # --- Generate attention heatmaps via the shared inference pipeline ---
