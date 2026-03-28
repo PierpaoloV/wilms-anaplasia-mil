@@ -132,6 +132,7 @@ def run_experiment(cfg):
             device=device,
             weighted=cfg.get("weighted", False),
             weight_decay=float(cfg.get("weight_decay", 1e-4)),
+            gmean_threshold=float(cfg.get("gmean_threshold", 0.55)),
         )
 
         # --- Generate attention heatmaps via the shared inference pipeline ---
