@@ -381,6 +381,7 @@ def cross_validate_mil(
     save_embeddings=True,
     weight_decay=1e-4,
     gmean_threshold=0.55,
+    label_smoothing=0.1,
     logger=None,
 ):
     """
@@ -478,7 +479,8 @@ def cross_validate_mil(
                 logits, _ = model(feats)
 
                 ce_loss = F.cross_entropy(
-                    logits, label, reduction="none", weight=class_weights
+                    logits, label, reduction="none", weight=class_weights,
+                    label_smoothing=label_smoothing,
                 )
 
                 probs = F.softmax(logits, dim=1)
@@ -512,7 +514,8 @@ def cross_validate_mil(
                         label = label.unsqueeze(0)
 
                     logits, out = model(feats)
-                    loss = F.cross_entropy(logits, label, weight=class_weights)
+                    loss = F.cross_entropy(logits, label, weight=class_weights,
+                                          label_smoothing=label_smoothing)
                     val_loss += loss.item()
 
                     probs = F.softmax(logits, dim=1).cpu().numpy()[0]
