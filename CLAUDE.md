@@ -62,7 +62,9 @@ Each completed run produces:
 - `output_dir/results/summary.csv` — mean/std/median per metric across folds
 - `output_dir/results/per_fold_metrics.csv` — one row per fold
 - `output_dir/results/per_slide_predictions.csv`
-- `output_dir/models/mil_best_fold{N}.pt` — best checkpoint per fold
+- `output_dir/models/mil_best_auc_fold{N}.pt` — best val AUC checkpoint per fold
+- `output_dir/models/mil_best_loss_fold{N}.pt` — best val loss checkpoint per fold
+- `output_dir/models/mil_best_gmean_fold{N}.pt` — best Gmean checkpoint per fold
 - `combined_results.csv` in `output_base_dir` — cross-run summary
 
 ## Architecture
@@ -95,7 +97,17 @@ epochs: 20
 weighted: false       # weighted sampling hurts on this ~50/50 dataset
 ```
 
-**Saving criterion:** best val AUC, gated by `gmean >= gmean_threshold`. If no epoch passes the gate, a fallback model (best AUC regardless of Gmean) is saved with a warning.
+**Checkpoint strategy:** all epochs are saved during training; after the fold completes, three named checkpoints are selected retrospectively and all per-epoch files are deleted. The first 3 epochs (warmup) are excluded from selection.
+
+| Checkpoint | Criterion |
+|---|---|
+| `mil_best_auc_fold{N}.pt` | highest val AUC |
+| `mil_best_loss_fold{N}.pt` | lowest val loss |
+| `mil_best_gmean_fold{N}.pt` | highest Gmean = √(sens × spec) |
+
+If two or more criteria point to the same epoch, the file is copied under each name and a log message notes the overlap. The canonical checkpoint used by the inference code is `mil_best_auc_fold{N}.pt`.
+
+The `gmean_threshold` parameter is no longer used for checkpoint gating (it remains in `runs.yaml` for reference but has no effect on saving).
 
 **Epoch progress display:** `Gmean | Sens | AUC` — F1 and ACC removed.
 

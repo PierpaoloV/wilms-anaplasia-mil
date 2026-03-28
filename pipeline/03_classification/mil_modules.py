@@ -1,4 +1,5 @@
-import os, math, time, random, json
+import os, math, time, random, json, shutil
+from collections import defaultdict
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -452,10 +453,8 @@ def cross_validate_mil(
         # === Model setup ===
         model = AttentionSingleBranch(size=size, n_classes=n_classes).to(device)
         optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-        best_val_auc = -1.0
-        best_model_path = f"{output_dir}/models/mil_best_fold{fold}.pt"
-        fallback_auc = -1.0
-        fallback_state = None
+        epoch_records = []   # {epoch, auc, val_loss, gmean} accumulated across all epochs
+        WARMUP_EPOCHS = 3    # epochs 1-3 excluded from checkpoint selection
 
         progress.console.print(f"  penalty_factor={penalty_factor}  lr={lr}")
         train_losses, val_losses = [], []
@@ -545,7 +544,6 @@ def cross_validate_mil(
             gmean = float(np.sqrt(sens * spec))
             auc_val = roc_auc_score(y_true, y_prob) if len(np.unique(y_true)) > 1 else np.nan
 
-            saved = (not np.isnan(auc_val)) and (auc_val > best_val_auc) and (gmean >= gmean_threshold)
             epoch_line = (
                 f"  Epoch {epoch:2d}/{epochs} | "
                 f"Train {train_loss:.4f} "
@@ -553,7 +551,6 @@ def cross_validate_mil(
                 f"Gmean {gmean:.3f} "
                 f"Sens {sens:.3f} "
                 f"AUC {auc_val:.3f}"
-                + (" ✓ best" if saved else "")
             )
             progress.console.print(
                 f"  Epoch {epoch:2d}/{epochs} | "
@@ -562,25 +559,69 @@ def cross_validate_mil(
                 f"Gmean [green]{gmean:.3f}[/green] "
                 f"Sens [cyan]{sens:.3f}[/cyan] "
                 f"AUC [magenta]{auc_val:.3f}[/magenta]"
-                + (" [bold green]✓ best[/bold green]" if saved else "")
             )
             if logger:
                 logger.info(epoch_line)
 
-            if saved:
-                best_val_auc = auc_val
-                torch.save(model.state_dict(), best_model_path)
-
-            # Track best-AUC fallback regardless of Gmean gate
-            if (not np.isnan(auc_val)) and (auc_val > fallback_auc):
-                fallback_auc = auc_val
-                fallback_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            # Save per-epoch checkpoint; selection happens after all epochs
+            ckpt_path = f"{output_dir}/models/mil_fold{fold}_epoch{epoch:02d}.pt"
+            torch.save(model.state_dict(), ckpt_path)
+            epoch_records.append({
+                "epoch": epoch, "auc": auc_val,
+                "val_loss": val_loss, "gmean": gmean,
+                "path": ckpt_path,
+            })
 
             progress.advance(epoch_task)
 
         progress.remove_task(epoch_task)
         all_train_losses.append(train_losses)
         all_val_losses.append(val_losses)
+
+        # === Checkpoint selection (retrospective, warmup excluded) ===
+        candidates = [r for r in epoch_records if r["epoch"] > WARMUP_EPOCHS and not np.isnan(r["auc"])]
+        fallback   = epoch_records[-1]  # last epoch, used only if no valid candidates
+
+        def _best(recs, key, maximize=True):
+            return (max if maximize else min)(recs, key=lambda r: r[key]) if recs else fallback
+
+        sel_auc   = _best(candidates, "auc",      maximize=True)
+        sel_loss  = _best(candidates, "val_loss",  maximize=False)
+        sel_gmean = _best(candidates, "gmean",     maximize=True)
+
+        named = {
+            "auc":   (sel_auc,   f"{output_dir}/models/mil_best_auc_fold{fold}.pt"),
+            "loss":  (sel_loss,  f"{output_dir}/models/mil_best_loss_fold{fold}.pt"),
+            "gmean": (sel_gmean, f"{output_dir}/models/mil_best_gmean_fold{fold}.pt"),
+        }
+
+        # Copy winners; detect overlapping epochs
+        epoch_to_criteria = defaultdict(list)
+        for criterion, (rec, dest) in named.items():
+            shutil.copy(rec["path"], dest)
+            epoch_to_criteria[rec["epoch"]].append(criterion)
+
+        for epoch_num, criteria in epoch_to_criteria.items():
+            if len(criteria) > 1:
+                msg = (f"Fold {fold}: {' + '.join(criteria)} all point to "
+                       f"epoch {epoch_num} — saved as one checkpoint (copied to each)")
+                progress.console.print(f"  [cyan]ℹ {msg}[/cyan]")
+                if logger:
+                    logger.info(msg)
+
+        for criterion, (rec, _) in named.items():
+            msg = (f"Fold {fold}: best {criterion} → epoch {rec['epoch']} "
+                   f"(AUC={rec['auc']:.3f}, loss={rec['val_loss']:.4f}, gmean={rec['gmean']:.3f})")
+            progress.console.print(f"  [green]{msg}[/green]")
+            if logger:
+                logger.info(msg)
+
+        # Delete per-epoch checkpoints
+        for rec in epoch_records:
+            Path(rec["path"]).unlink(missing_ok=True)
+
+        # Canonical best = best AUC (used by inference code)
+        best_model_path = named["auc"][1]
 
         # === Final evaluation ===
         model.load_state_dict(torch.load(best_model_path, weights_only=True))
@@ -616,15 +657,6 @@ def cross_validate_mil(
                 })
                 progress.advance(final_task)
         progress.remove_task(final_task)
-
-        # === Fallback: save best-AUC model if Gmean gate blocked all epochs ===
-        if not Path(best_model_path).exists() and fallback_state is not None:
-            torch.save(fallback_state, best_model_path)
-            msg = (f"Fold {fold}: no epoch passed Gmean >= {gmean_threshold} — "
-                   f"saving fallback model (best AUC={fallback_auc:.3f})")
-            progress.console.print(f"  [yellow]⚠ {msg}[/yellow]")
-            if logger:
-                logger.warning(msg)
 
         # === Confusion matrix per fold ===
         cm = confusion_matrix(y_true, y_pred)
