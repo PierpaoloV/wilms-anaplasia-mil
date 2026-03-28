@@ -530,8 +530,8 @@ def cross_validate_mil(
             val_losses.append(val_loss)
 
             # === Metrics ===
-            acc = accuracy_score(y_true, y_pred)
             f1 = f1_score(y_true, y_pred, zero_division=0)
+            sens = recall_score(y_true, y_pred, zero_division=0)
             auc_val = roc_auc_score(y_true, y_prob) if len(np.unique(y_true)) > 1 else np.nan
 
             saved = (not np.isnan(auc_val)) and (auc_val > best_val_auc)
@@ -539,7 +539,7 @@ def cross_validate_mil(
                 f"  Epoch {epoch:2d}/{epochs} | "
                 f"Train [red]{train_loss:.4f}[/red] "
                 f"Val [yellow]{val_loss:.4f}[/yellow] | "
-                f"ACC [green]{acc:.3f}[/green] "
+                f"Sens [green]{sens:.3f}[/green] "
                 f"F1 [cyan]{f1:.3f}[/cyan] "
                 f"AUC [magenta]{auc_val:.3f}[/magenta]"
                 + (" [bold green]✓ best[/bold green]" if saved else "")
@@ -604,7 +604,7 @@ def cross_validate_mil(
         f1 = f1_score(y_true, y_pred, zero_division=0)
         auc_val = roc_auc_score(y_true, y_prob) if len(np.unique(y_true)) > 1 else np.nan
 
-        fold_metrics.append({"fold": fold, "accuracy": acc, "precision": prec, "recall": rec, "f1": f1, "auc": auc_val})
+        fold_metrics.append({"fold": fold, "precision": prec, "sensitivity": rec, "f1": f1, "auc": auc_val})
 
         # === Loss plot per fold ===
         plt.figure()
