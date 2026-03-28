@@ -412,10 +412,16 @@ def cross_validate_mil(
       fold_task = progress.add_task("[bold cyan]Cross-validation", total=5)
 
       for fold in range(1, 6):
-        progress.console.rule(f"[bold]Fold {fold} / 5")
-
         val_ids = splits.loc[splits["fold"] == fold, "slide_id"].tolist()
         train_ids = splits.loc[splits["fold"] != fold, "slide_id"].tolist()
+
+        train_pos = splits.loc[(splits["fold"] != fold) & (splits["Diagnose"] != "Not Anaplasia"), "slide_id"].count()
+        val_pos   = splits.loc[(splits["fold"] == fold) & (splits["Diagnose"] != "Not Anaplasia"), "slide_id"].count()
+        progress.console.rule(
+            f"[bold]Fold {fold} / 5  "
+            f"[white][train: {len(train_ids)}, {train_pos} pos]  "
+            f"[val: {len(val_ids)}, {val_pos} pos][/white]"
+        )
 
         train_dataset = MILSlideDataset(splits_csv, features_dir, coord_dir, slide_ids=train_ids)
         val_dataset   = MILSlideDataset(splits_csv, features_dir, coord_dir, slide_ids=val_ids)
