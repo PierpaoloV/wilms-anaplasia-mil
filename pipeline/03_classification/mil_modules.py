@@ -380,6 +380,7 @@ def cross_validate_mil(
     weighted=False,
     save_embeddings=True,
     weight_decay=1e-4,
+    gmean_threshold=0.55,
 ):
     """
     Perform 5-fold cross-validation using AttentionSingleBranch (MIL),
@@ -532,14 +533,16 @@ def cross_validate_mil(
             # === Metrics ===
             f1 = f1_score(y_true, y_pred, zero_division=0)
             sens = recall_score(y_true, y_pred, zero_division=0)
+            spec = recall_score(y_true, y_pred, pos_label=0, zero_division=0)
+            gmean = float(np.sqrt(sens * spec))
             auc_val = roc_auc_score(y_true, y_prob) if len(np.unique(y_true)) > 1 else np.nan
 
-            saved = (not np.isnan(auc_val)) and (auc_val > best_val_auc)
+            saved = (not np.isnan(auc_val)) and (auc_val > best_val_auc) and (gmean >= gmean_threshold)
             progress.console.print(
                 f"  Epoch {epoch:2d}/{epochs} | "
                 f"Train [red]{train_loss:.4f}[/red] "
                 f"Val [yellow]{val_loss:.4f}[/yellow] | "
-                f"Sens [green]{sens:.3f}[/green] "
+                f"Gmean [green]{gmean:.3f}[/green] "
                 f"F1 [cyan]{f1:.3f}[/cyan] "
                 f"AUC [magenta]{auc_val:.3f}[/magenta]"
                 + (" [bold green]✓ best[/bold green]" if saved else "")
