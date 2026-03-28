@@ -213,8 +213,10 @@ def main():
                     "f1_median":    round(df_s.loc['median','f1'], 4),
                     "auc":          f"{round(df_s.loc['mean','auc'],4)} ± {round(df_s.loc['std','auc'],4)}",
                     "auc_median":   round(df_s.loc['median','auc'], 4),
-                    "precision":    f"{round(df_s.loc['mean','precision'],4)} ± {round(df_s.loc['std','precision'],4)}",
-                    "prec_median":  round(df_s.loc['median','precision'], 4),
+                    "precision":      f"{round(df_s.loc['mean','precision'],4)} ± {round(df_s.loc['std','precision'],4)}",
+                    "prec_median":    round(df_s.loc['median','precision'], 4),
+                    "sensitivity":    f"{round(df_s.loc['mean','sensitivity'],4)} ± {round(df_s.loc['std','sensitivity'],4)}",
+                    "sens_median":    round(df_s.loc['median','sensitivity'], 4),
                 }
                 all_summaries.append(row)
 
