@@ -543,7 +543,7 @@ def cross_validate_mil(
                 f"Train [red]{train_loss:.4f}[/red] "
                 f"Val [yellow]{val_loss:.4f}[/yellow] | "
                 f"Gmean [green]{gmean:.3f}[/green] "
-                f"F1 [cyan]{f1:.3f}[/cyan] "
+                f"Sens [cyan]{sens:.3f}[/cyan] "
                 f"AUC [magenta]{auc_val:.3f}[/magenta]"
                 + (" [bold green]✓ best[/bold green]" if saved else "")
             )
