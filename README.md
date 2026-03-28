@@ -185,6 +185,16 @@ python pipeline/03_classification/mil_main.py \
     --run baseline_weighted --rerun
 ```
 
+Each completed run saves three checkpoints per fold, selected retrospectively after all epochs finish (epochs 1–3 excluded as warmup):
+
+| File | Selected by |
+|------|-------------|
+| `models/mil_best_auc_fold{N}.pt` | highest validation AUC |
+| `models/mil_best_loss_fold{N}.pt` | lowest validation loss |
+| `models/mil_best_gmean_fold{N}.pt` | highest Gmean = √(sensitivity × specificity) |
+
+When two or more criteria point to the same epoch this is logged and the checkpoint is copied under each name. Inference uses `mil_best_auc_fold{N}.pt` as the default.
+
 ### 6. Inference & Attention Heatmaps
 
 ```bash
