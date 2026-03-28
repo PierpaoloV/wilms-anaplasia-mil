@@ -209,9 +209,12 @@ def main():
                     "weighted":       cfg.get("weighted", False),
                     "penalty_factor": cfg.get("penalty_factor", 0.0),
                     "architecture":   "→".join(str(s) for s in size),
-                    "f1":        f"{round(df_s.loc['mean','f1'],4)} ± {round(df_s.loc['std','f1'],4)}",
-                    "auc":       f"{round(df_s.loc['mean','auc'],4)} ± {round(df_s.loc['std','auc'],4)}",
-                    "precision": f"{round(df_s.loc['mean','precision'],4)} ± {round(df_s.loc['std','precision'],4)}",
+                    "f1":           f"{round(df_s.loc['mean','f1'],4)} ± {round(df_s.loc['std','f1'],4)}",
+                    "f1_median":    round(df_s.loc['median','f1'], 4),
+                    "auc":          f"{round(df_s.loc['mean','auc'],4)} ± {round(df_s.loc['std','auc'],4)}",
+                    "auc_median":   round(df_s.loc['median','auc'], 4),
+                    "precision":    f"{round(df_s.loc['mean','precision'],4)} ± {round(df_s.loc['std','precision'],4)}",
+                    "prec_median":  round(df_s.loc['median','precision'], 4),
                 }
                 all_summaries.append(row)
 
