@@ -379,6 +379,7 @@ def cross_validate_mil(
     device=None,
     weighted=False,
     save_embeddings=True,
+    weight_decay=1e-4,
 ):
     """
     Perform 5-fold cross-validation using AttentionSingleBranch (MIL),
@@ -439,8 +440,8 @@ def cross_validate_mil(
 
         # === Model setup ===
         model = AttentionSingleBranch(size=size, n_classes=n_classes).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-        best_val_loss = float("inf")
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+        best_val_auc = -1.0
         best_model_path = f"{output_dir}/models/mil_best_fold{fold}.pt"
 
         progress.console.print(f"  penalty_factor={penalty_factor}  lr={lr}")
@@ -527,7 +528,7 @@ def cross_validate_mil(
             f1 = f1_score(y_true, y_pred, zero_division=0)
             auc_val = roc_auc_score(y_true, y_prob) if len(np.unique(y_true)) > 1 else np.nan
 
-            saved = val_loss < best_val_loss
+            saved = (not np.isnan(auc_val)) and (auc_val > best_val_auc)
             progress.console.print(
                 f"  Epoch {epoch:2d}/{epochs} | "
                 f"Train [red]{train_loss:.4f}[/red] "
@@ -539,7 +540,7 @@ def cross_validate_mil(
             )
 
             if saved:
-                best_val_loss = val_loss
+                best_val_auc = auc_val
                 torch.save(model.state_dict(), best_model_path)
 
             progress.advance(epoch_task)

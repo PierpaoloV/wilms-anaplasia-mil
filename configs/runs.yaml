@@ -9,6 +9,7 @@ defaults:
   lr: 1e-4
   batch_size: 1
   penalty_factor: 0.0
+  weight_decay: 1e-4
   weighted: false
   size: [1280, 512, 256]
   device: "cuda"

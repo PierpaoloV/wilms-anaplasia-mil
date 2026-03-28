@@ -131,6 +131,7 @@ def run_experiment(cfg):
             size=tuple(cfg["size"]),
             device=device,
             weighted=cfg.get("weighted", False),
+            weight_decay=float(cfg.get("weight_decay", 1e-4)),
         )
 
         # --- Generate attention heatmaps via the shared inference pipeline ---
