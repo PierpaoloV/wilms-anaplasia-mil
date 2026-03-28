@@ -453,6 +453,8 @@ def cross_validate_mil(
         optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
         best_val_auc = -1.0
         best_model_path = f"{output_dir}/models/mil_best_fold{fold}.pt"
+        fallback_auc = -1.0
+        fallback_state = None
 
         progress.console.print(f"  penalty_factor={penalty_factor}  lr={lr}")
         train_losses, val_losses = [], []
@@ -566,6 +568,11 @@ def cross_validate_mil(
                 best_val_auc = auc_val
                 torch.save(model.state_dict(), best_model_path)
 
+            # Track best-AUC fallback regardless of Gmean gate
+            if (not np.isnan(auc_val)) and (auc_val > fallback_auc):
+                fallback_auc = auc_val
+                fallback_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+
             progress.advance(epoch_task)
 
         progress.remove_task(epoch_task)
@@ -606,6 +613,15 @@ def cross_validate_mil(
                 })
                 progress.advance(final_task)
         progress.remove_task(final_task)
+
+        # === Fallback: save best-AUC model if Gmean gate blocked all epochs ===
+        if not Path(best_model_path).exists() and fallback_state is not None:
+            torch.save(fallback_state, best_model_path)
+            msg = (f"Fold {fold}: no epoch passed Gmean >= {gmean_threshold} — "
+                   f"saving fallback model (best AUC={fallback_auc:.3f})")
+            progress.console.print(f"  [yellow]⚠ {msg}[/yellow]")
+            if logger:
+                logger.warning(msg)
 
         # === Confusion matrix per fold ===
         cm = confusion_matrix(y_true, y_pred)
