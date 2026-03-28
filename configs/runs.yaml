@@ -6,13 +6,14 @@ defaults:
   patch_size: 224
   n_classes: 2
   epochs: 20
-  lr: 1e-4
+  lr: 1e-5
   batch_size: 1
   penalty_factor: 0.0
   weight_decay: 1e-4
   gmean_threshold: 0.55
+  label_smoothing: 0.1
   weighted: false
-  size: [1280, 512, 256]
+  size: [1280, 256]
   device: "cuda"
   seed: 42
   save_embeddings: true
