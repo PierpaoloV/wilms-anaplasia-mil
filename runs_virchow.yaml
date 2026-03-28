@@ -1,5 +1,5 @@
 defaults:
-  output_base_dir: "/home/user/experiments_complete"
+  output_base_dir: "/home/user/experiments_fm_amil/virchow"
   base_dir: "/data/pathology/projects/pierpaolo/postdoc/Anaplasia_Classification/virchow/virchow_features/2025-10-08_14_17/"
   labels_csv: "/data/pathology/projects/pierpaolo/postdoc/Anaplasia_Classification/csvs/splits_updated.csv"
   wsi_dir: "/data/pa_cpgarchive/archives/kidney/Wilms_Tumor/Images/"
