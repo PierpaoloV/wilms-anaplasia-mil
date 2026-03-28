@@ -147,7 +147,7 @@ class AttentionSingleBranch(nn.Module):
     def __init__(self, size=(1280, 512, 256), use_dropout=False, n_classes=2):
         super().__init__()
 
-        assert len(size) >= 3, "Size tuple must have at least 3 elements: (input, hidden, attention_bottleneck)"
+        assert len(size) >= 2, "Size tuple must have at least 2 elements: (input, attention_bottleneck)"
         self.n_classes = n_classes
         self.use_dropout = use_dropout
         self.size = size
@@ -375,7 +375,7 @@ def cross_validate_mil(
     lr=1e-4,
     batch_size=1,
     penalty_factor=2.0,
-    size=(1280, 512, 256),
+    size=(1280, 256),
     device=None,
     weighted=False,
     save_embeddings=True,
