@@ -10,7 +10,7 @@ from mil_main import load_config
 # ---------------------------------------------------------
 # Run full experiment
 # ---------------------------------------------------------
-def run_experiment(cfg, device, extract_region, combine_subplots, subplot_layout, rerun=False):
+def run_experiment(cfg, device, extract_region, combine_subplots, subplot_layout, checkpoint="auc", rerun=False):
     exp_name = cfg.get("name", cfg.get("run_key", "unknown"))
 
     labels_csv = cfg.get("labels_csv") or cfg.get("labels_dir")
@@ -36,6 +36,7 @@ def run_experiment(cfg, device, extract_region, combine_subplots, subplot_layout
             fold,
             cfg,
             device=device,
+            checkpoint=checkpoint,
             generate_reports=False,
         )
 
@@ -59,6 +60,8 @@ if __name__ == "__main__":
     parser.add_argument("--extract_region", action="store_true")
     parser.add_argument("--combine_subplots", action="store_true")
     parser.add_argument("--subplot_layout", default="horizontal")
+    parser.add_argument("--checkpoint", default="auc", choices=["auc", "loss", "gmean"],
+                        help="Which saved checkpoint to use for inference (default: auc)")
     parser.add_argument("--rerun", action="store_true", help="Regenerate reports even if they already exist")
 
     args = parser.parse_args()
@@ -77,6 +80,7 @@ if __name__ == "__main__":
             extract_region=args.extract_region,
             combine_subplots=args.combine_subplots,
             subplot_layout=args.subplot_layout,
+            checkpoint=args.checkpoint,
             rerun=args.rerun,
         )
 

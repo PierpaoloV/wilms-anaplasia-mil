@@ -210,6 +210,21 @@ python pipeline/03_classification/mil_inference.py \
     --run all --device cuda
 ```
 
+Use `--checkpoint` to select which saved model to load per fold (default: `auc`):
+
+```bash
+# Use best Gmean checkpoint instead of best AUC
+python pipeline/03_classification/mil_inference.py \
+    --config configs/runs.yaml \
+    --run baseline --device cuda --checkpoint gmean
+```
+
+| `--checkpoint` | Loads |
+|---|---|
+| `auc` (default) | `mil_best_auc_fold{N}.pt` |
+| `loss` | `mil_best_loss_fold{N}.pt` |
+| `gmean` | `mil_best_gmean_fold{N}.pt` |
+
 ### 7. Linear / MLP Baselines
 
 ```bash

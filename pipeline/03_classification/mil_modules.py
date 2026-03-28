@@ -284,6 +284,7 @@ def run_inference_fold(
     fold,
     cfg,
     device="cuda",
+    checkpoint="auc",
     generate_reports=True,
     extract_region=False,
     combine_subplots=True,
@@ -308,7 +309,7 @@ def run_inference_fold(
         print(f"  No slides for fold {fold}")
         return
 
-    model_path = os.path.join(experiment_dir, "models", f"mil_best_fold{fold}.pt")
+    model_path = os.path.join(experiment_dir, "models", f"mil_best_{checkpoint}_fold{fold}.pt")
     if not os.path.exists(model_path):
         print(f"  Model missing: {model_path}")
         return
