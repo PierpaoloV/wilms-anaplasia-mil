@@ -13,7 +13,7 @@ defaults:
   gmean_threshold: 0.55
   label_smoothing: 0.1
   weighted: false
-  size: [1280, 256]
+  size: [1280, 512, 128]
   device: "cuda"
   seed: 42
   save_embeddings: true

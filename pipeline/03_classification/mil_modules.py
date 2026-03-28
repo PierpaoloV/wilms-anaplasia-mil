@@ -375,7 +375,7 @@ def cross_validate_mil(
     lr=1e-4,
     batch_size=1,
     penalty_factor=2.0,
-    size=(1280, 256),
+    size=(1280, 512, 128),
     device=None,
     weighted=False,
     save_embeddings=True,
