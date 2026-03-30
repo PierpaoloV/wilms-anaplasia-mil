@@ -10,7 +10,7 @@ from mil_main import load_config
 # ---------------------------------------------------------
 # Run full experiment
 # ---------------------------------------------------------
-def run_experiment(cfg, device, extract_region, subplot_layout, checkpoint="auc", rerun=False, draw_cluster_circle=False):
+def run_experiment(cfg, device, extract_region, subplot_layout, checkpoint="auc", rerun=False, draw_cluster_circle=False, cluster_circle_max_radius_mm=1.5):
     exp_name = cfg.get("name", cfg.get("run_key", "unknown"))
 
     labels_csv = cfg.get("labels_csv") or cfg.get("labels_dir")
@@ -46,6 +46,7 @@ def run_experiment(cfg, device, extract_region, subplot_layout, checkpoint="auc"
         extract_region=extract_region,
         subplot_layout=subplot_layout,
         draw_cluster_circle=draw_cluster_circle,
+        cluster_circle_max_radius_mm=cluster_circle_max_radius_mm,
     )
 
 
@@ -61,6 +62,9 @@ if __name__ == "__main__":
     parser.add_argument("--subplot_layout", default="horizontal")
     parser.add_argument("--draw_cluster_circle", action="store_true",
                         help="Overlay attention-weighted centroid circle on the WSI heatmap")
+    parser.add_argument("--cluster_circle_max_radius_mm", type=float, default=1.5,
+                        help="Cap the circle radius at this value in mm (default: 1.5 — the clinical focus definition). "
+                             "If the adaptive RMS radius exceeds this, the circle is drawn dashed in yellow.")
     parser.add_argument("--checkpoint", default="auc", choices=["auc", "loss", "gmean"],
                         help="Which saved checkpoint to use for inference (default: auc)")
     parser.add_argument("--rerun", action="store_true", help="Regenerate reports even if they already exist")
@@ -83,6 +87,7 @@ if __name__ == "__main__":
             checkpoint=args.checkpoint,
             rerun=args.rerun,
             draw_cluster_circle=args.draw_cluster_circle,
+            cluster_circle_max_radius_mm=args.cluster_circle_max_radius_mm,
         )
 
     print("\n🎉 All runs completed.")

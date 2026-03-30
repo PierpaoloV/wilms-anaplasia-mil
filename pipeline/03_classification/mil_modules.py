@@ -254,6 +254,7 @@ def generate_experiment_reports(
     extract_region=False,
     subplot_layout="horizontal",
     draw_cluster_circle=False,
+    cluster_circle_max_radius_mm=1.5,
 ):
     """Generate visual attention reports for all NPZs in experiment_dir/inference/."""
     fold_out    = os.path.join(experiment_dir, "inference")
@@ -274,6 +275,9 @@ def generate_experiment_reports(
         draw_topk=int(cfg.get("draw_topk", 20)),
         subplot_layout=subplot_layout,
         draw_cluster_circle=draw_cluster_circle,
+        cluster_circle_max_radius_mm=cluster_circle_max_radius_mm,
+        save_tif=bool(cfg.get("save_tif", False)),
+        tif_target_downsample=float(cfg.get("tif_target_downsample", 8.0)),
         results_csv=results_csv if os.path.exists(results_csv) else None,
         num_workers=cfg.get("report_workers", None),
     )
@@ -289,6 +293,7 @@ def run_inference_fold(
     extract_region=False,
     subplot_layout="horizontal",
     draw_cluster_circle=False,
+    cluster_circle_max_radius_mm=1.5,
 ):
     """
     Load the best saved model for a fold, run forward pass on the validation
@@ -364,6 +369,7 @@ def run_inference_fold(
             extract_region=extract_region,
             subplot_layout=subplot_layout,
             draw_cluster_circle=draw_cluster_circle,
+            cluster_circle_max_radius_mm=cluster_circle_max_radius_mm,
         )
 
 
@@ -1103,7 +1109,8 @@ def wsi_attention_heatmap(
     max_size: int | None = 4096,
     draw_topk: int = 20,
     box_width: int = 2,
-    draw_cluster_circle: bool = False, # draw attention-weighted centroid + 1-std radius circle
+    draw_cluster_circle: bool = False, # draw attention-weighted centroid + capped RMS radius circle
+    cluster_circle_max_radius_mm: float = 1.5, # cap radius at this value (mm); matches clinical focus definition
 ):
     wsi = openslide.open_slide(slide_path)
 
@@ -1174,7 +1181,7 @@ def wsi_attention_heatmap(
         y1 = int(min(H - 1, y0 + ph_vis))
         draw.rectangle([x0, y0, x1, y1], outline="black", width=box_width)
 
-    # draw attention-weighted centroid + 1-std-dev radius circle over top-k patches
+    # draw attention-weighted centroid + capped RMS radius circle over top-k patches
     if draw_cluster_circle and len(top_idx) > 1:
         top_scores = raw[top_idx].astype(np.float32)
         top_scores = top_scores - top_scores.min()
@@ -1192,21 +1199,47 @@ def wsi_attention_heatmap(
         cx = float(np.dot(weights, top_cx))
         cy = float(np.dot(weights, top_cy))
 
-        # attention-weighted RMS distance from centroid → radius
+        # attention-weighted RMS distance from centroid → adaptive radius
         dists_sq = (top_cx - cx) ** 2 + (top_cy - cy) ** 2
-        radius = float(np.sqrt(np.dot(weights, dists_sq)))
-        radius = max(radius, pw_vis)  # floor at one patch width
+        rms_radius = float(np.sqrt(np.dot(weights, dists_sq)))
+        rms_radius = max(rms_radius, pw_vis)  # floor at one patch width
 
-        # draw: thick white ring with a thinner black outer ring for contrast
+        # cap radius at cluster_circle_max_radius_mm using slide MPP
+        mpp_x = wsi.properties.get(openslide.PROPERTY_NAME_MPP_X)
+        if mpp_x is not None:
+            mpp_vis = float(mpp_x) * ds_vis          # µm/px at vis_level
+            radius_max_px = (cluster_circle_max_radius_mm * 1000.0) / mpp_vis
+        else:
+            radius_max_px = float("inf")              # no MPP metadata: no cap
+
+        capped = rms_radius > radius_max_px
+        radius = min(rms_radius, radius_max_px)
+
         r = int(radius)
         bbox = [int(cx - r), int(cy - r), int(cx + r), int(cy + r)]
-        draw.ellipse(bbox, outline="black", width=box_width + 4)
-        draw.ellipse(bbox, outline="white", width=box_width + 2)
+
+        if capped:
+            # dashed ring: draw alternating arcs (16 segments, every other one filled)
+            # indicates radius was capped — attention was more spread out than one focus
+            n_seg = 16
+            seg_deg = 360.0 / n_seg
+            for i in range(0, n_seg, 2):
+                a0 = i * seg_deg - 90          # start at top
+                a1 = a0 + seg_deg
+                draw.arc(bbox, start=a0, end=a1, fill="black", width=box_width + 4)
+                draw.arc(bbox, start=a0, end=a1, fill="yellow", width=box_width + 2)
+        else:
+            # solid ring: radius reflects actual attention cluster
+            draw.ellipse(bbox, outline="black", width=box_width + 4)
+            draw.ellipse(bbox, outline="white", width=box_width + 2)
 
         # mark centroid with a small cross
         cs = max(4, pw_vis // 4)
-        draw.line([(int(cx) - cs, int(cy)), (int(cx) + cs, int(cy))], fill="white", width=box_width + 1)
-        draw.line([(int(cx), int(cy) - cs), (int(cx), int(cy) + cs)], fill="white", width=box_width + 1)
+        cross_color = "yellow" if capped else "white"
+        draw.line([(int(cx) - cs, int(cy)), (int(cx) + cs, int(cy))], fill="black", width=box_width + 2)
+        draw.line([(int(cx), int(cy) - cs), (int(cx), int(cy) + cs)], fill="black", width=box_width + 2)
+        draw.line([(int(cx) - cs, int(cy)), (int(cx) + cs, int(cy))], fill=cross_color, width=box_width)
+        draw.line([(int(cx), int(cy) - cs), (int(cx), int(cy) + cs)], fill=cross_color, width=box_width)
 
     # resize for saving
     if max_size is not None:
@@ -1216,6 +1249,105 @@ def wsi_attention_heatmap(
             out_img = out_img.resize((int(w * f), int(h * f)), Image.BILINEAR)
 
     return out_img, top_idx
+
+
+def save_attention_as_tif(
+    slide_path: str,
+    coords_lvl0: np.ndarray,          # (N,2) patch top-lefts at level 0
+    scores_raw: np.ndarray,            # (N,) raw attention scores
+    out_path: str,
+    patch_level: int = 1,
+    patch_size: int = 224,
+    cmap_name: str = "plasma",
+    alpha: float = 0.6,
+    convert_to_percentiles: bool = True,
+    clip_percentiles: tuple = (5, 99),
+    target_downsample: float = 8.0,    # base pyramid level (~8x from level 0)
+) -> str:
+    """
+    Save the WSI attention heatmap as a multiresolution pyramidal TIFF.
+
+    The base level is the openslide level closest to target_downsample (default
+    8x from level 0 — patches remain visibly resolved at ~28px per patch).
+    Successive 2x-downsampled levels are appended as TIFF pages, producing a
+    multi-page file that QuPath, ASAP, and ImageJ read as a pyramid.
+
+    No top-k boxes or cluster circle are drawn — this is a clean overlay for
+    detailed inspection in a viewer.
+
+    Memory note: the full WSI is read at the base level (~8x downsample).
+    For a large 40x slide this is roughly 12k×10k pixels (~360 MB RGB before
+    compression). Increase target_downsample to 16 to halve memory usage.
+    """
+    wsi = openslide.open_slide(slide_path)
+
+    base_level = wsi.get_best_level_for_downsample(target_downsample)
+    ds_base  = float(wsi.level_downsamples[base_level])
+    ds_patch = float(wsi.level_downsamples[patch_level])
+
+    W_base, H_base = wsi.level_dimensions[base_level]
+    scale_base = 1.0 / ds_base
+
+    # patch footprint at base level
+    patch_size_lvl0 = patch_size * ds_patch
+    pw = max(1, int(np.ceil(patch_size_lvl0 * scale_base)))
+    ph = max(1, int(np.ceil(patch_size_lvl0 * scale_base)))
+
+    # scale coords to base level
+    coords_base = np.ceil(coords_lvl0 * scale_base).astype(int)
+
+    # process scores
+    s = scores_raw.astype(np.float32).reshape(-1)
+    if convert_to_percentiles:
+        s = to_percentiles_0_1(s)
+
+    # MAX-pool attention into overlay grid
+    overlay = np.zeros((H_base, W_base), dtype=np.float32)
+    for (x, y), val in zip(coords_base, s):
+        x0, y0 = max(0, int(x)), max(0, int(y))
+        x1, y1 = min(W_base, x0 + pw), min(H_base, y0 + ph)
+        if x0 >= W_base or y0 >= H_base or x1 <= 0 or y1 <= 0:
+            continue
+        overlay[y0:y1, x0:x1] = np.maximum(overlay[y0:y1, x0:x1], float(val))
+
+    # contrast stretch
+    nz = overlay > 0
+    if np.any(nz):
+        lo, hi = np.percentile(overlay[nz], clip_percentiles)
+        overlay = np.clip(overlay, lo, hi)
+        overlay = (overlay - overlay.min()) / (overlay.max() - overlay.min() + 1e-12)
+
+    # blend with WSI tissue at base level
+    base_rgb = np.array(wsi.read_region((0, 0), base_level, (W_base, H_base)).convert("RGB"))
+    wsi.close()
+
+    cmap = plt.get_cmap(cmap_name)
+    color     = (cmap(overlay)[:, :, :3] * 255).astype(np.uint8)
+    alpha_map = (overlay * alpha)[..., np.newaxis]
+    blended   = (
+        base_rgb.astype(np.float32) * (1 - alpha_map)
+        + color.astype(np.float32)  * alpha_map
+    ).astype(np.uint8)
+
+    # build pyramid by 2x downsampling until max dim < 512
+    levels = [Image.fromarray(blended)]
+    while max(levels[-1].size) > 512:
+        w, h = levels[-1].size
+        levels.append(levels[-1].resize((max(1, w // 2), max(1, h // 2)), Image.BILINEAR))
+
+    # save as multi-page TIFF (largest level first — recognised as pyramid by QuPath/ASAP)
+    out_dir = os.path.dirname(out_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    levels[0].save(
+        out_path,
+        format="TIFF",
+        save_all=True,
+        append_images=levels[1:],
+        compression="tiff_lzw",
+    )
+
+    return out_path
 
 
 _LABEL_NAMES = {0: "Not Anaplasia", 1: "Anaplasia"}
@@ -1260,7 +1392,9 @@ def _render_one_slide(job):
     extract_region       = job["extract_region"]
     draw_topk            = job["draw_topk"]
     subplot_layout       = job["subplot_layout"]
-    draw_cluster_circle  = job["draw_cluster_circle"]
+    draw_cluster_circle          = job["draw_cluster_circle"]
+    cluster_circle_max_radius_mm = job["cluster_circle_max_radius_mm"]
+    save_tif                     = job["save_tif"]
 
     data = np.load(os.path.join(att_dir, fname))
     coords = data["coords"].astype(np.float32)
@@ -1291,6 +1425,7 @@ def _render_one_slide(job):
             max_size=max_size,
             draw_topk=draw_topk,
             draw_cluster_circle=draw_cluster_circle,
+            cluster_circle_max_radius_mm=cluster_circle_max_radius_mm,
         )
 
         wsi = openslide.open_slide(slide_path)
@@ -1322,6 +1457,20 @@ def _render_one_slide(job):
             os.path.join(out_dir, f"{slide_id}_combined.jpg"),
             quality=92, optimize=True, progressive=True,
         )
+
+        if save_tif:
+            save_attention_as_tif(
+                slide_path=slide_path,
+                coords_lvl0=coords,
+                scores_raw=scores_raw,
+                out_path=os.path.join(job["tif_dir"], f"{slide_id}_attention.tif"),
+                patch_level=patch_level,
+                patch_size=patch_size,
+                cmap_name=cmap_name,
+                alpha=alpha,
+                convert_to_percentiles=convert_to_pct,
+                target_downsample=job["tif_target_downsample"],
+            )
 
         return slide_id, None
 
@@ -1370,6 +1519,9 @@ def generate_all_attention_reports(
     draw_topk=20,
     subplot_layout="horizontal",
     draw_cluster_circle=False,
+    cluster_circle_max_radius_mm=1.5,
+    save_tif=False,
+    tif_target_downsample=8.0,
     results_csv=None,
     num_workers=None,
 ):
@@ -1377,7 +1529,10 @@ def generate_all_attention_reports(
 
     att_dir = os.path.join(base_exp_dir, "attentions")
     out_dir = os.path.join(base_exp_dir, "visual_reports")
+    tif_dir = os.path.join(base_exp_dir, "tifs")
     os.makedirs(out_dir, exist_ok=True)
+    if save_tif:
+        os.makedirs(tif_dir, exist_ok=True)
 
     pred_map = _load_predictions(base_exp_dir, results_csv)
     files    = [f for f in os.listdir(att_dir) if f.endswith(".npz")]
@@ -1393,6 +1548,10 @@ def generate_all_attention_reports(
         max_size=max_size, use_raw=use_raw, extract_region=extract_region,
         draw_topk=draw_topk, subplot_layout=subplot_layout,
         draw_cluster_circle=draw_cluster_circle,
+        cluster_circle_max_radius_mm=cluster_circle_max_radius_mm,
+        save_tif=save_tif,
+        tif_dir=tif_dir,
+        tif_target_downsample=tif_target_downsample,
     )
     jobs = [{**shared, "fname": fname} for fname in files]
 
