@@ -253,6 +253,7 @@ def generate_experiment_reports(
     cfg,
     extract_region=False,
     subplot_layout="horizontal",
+    draw_cluster_circle=False,
 ):
     """Generate visual attention reports for all NPZs in experiment_dir/inference/."""
     fold_out    = os.path.join(experiment_dir, "inference")
@@ -272,6 +273,7 @@ def generate_experiment_reports(
         extract_region=extract_region,
         draw_topk=int(cfg.get("draw_topk", 20)),
         subplot_layout=subplot_layout,
+        draw_cluster_circle=draw_cluster_circle,
         results_csv=results_csv if os.path.exists(results_csv) else None,
         num_workers=cfg.get("report_workers", None),
     )
@@ -286,6 +288,7 @@ def run_inference_fold(
     generate_reports=True,
     extract_region=False,
     subplot_layout="horizontal",
+    draw_cluster_circle=False,
 ):
     """
     Load the best saved model for a fold, run forward pass on the validation
@@ -360,6 +363,7 @@ def run_inference_fold(
             cfg,
             extract_region=extract_region,
             subplot_layout=subplot_layout,
+            draw_cluster_circle=draw_cluster_circle,
         )
 
 
@@ -1099,6 +1103,7 @@ def wsi_attention_heatmap(
     max_size: int | None = 4096,
     draw_topk: int = 20,
     box_width: int = 2,
+    draw_cluster_circle: bool = False, # draw attention-weighted centroid + 1-std radius circle
 ):
     wsi = openslide.open_slide(slide_path)
 
@@ -1169,6 +1174,40 @@ def wsi_attention_heatmap(
         y1 = int(min(H - 1, y0 + ph_vis))
         draw.rectangle([x0, y0, x1, y1], outline="black", width=box_width)
 
+    # draw attention-weighted centroid + 1-std-dev radius circle over top-k patches
+    if draw_cluster_circle and len(top_idx) > 1:
+        top_scores = raw[top_idx].astype(np.float32)
+        top_scores = top_scores - top_scores.min()
+        weight_sum = top_scores.sum()
+        if weight_sum > 0:
+            weights = top_scores / weight_sum
+        else:
+            weights = np.ones(len(top_idx)) / len(top_idx)
+
+        # patch centres in vis-level coords
+        top_cx = coords_vis[top_idx, 0] + pw_vis / 2.0
+        top_cy = coords_vis[top_idx, 1] + ph_vis / 2.0
+
+        # attention-weighted centroid
+        cx = float(np.dot(weights, top_cx))
+        cy = float(np.dot(weights, top_cy))
+
+        # attention-weighted RMS distance from centroid → radius
+        dists_sq = (top_cx - cx) ** 2 + (top_cy - cy) ** 2
+        radius = float(np.sqrt(np.dot(weights, dists_sq)))
+        radius = max(radius, pw_vis)  # floor at one patch width
+
+        # draw: thick white ring with a thinner black outer ring for contrast
+        r = int(radius)
+        bbox = [int(cx - r), int(cy - r), int(cx + r), int(cy + r)]
+        draw.ellipse(bbox, outline="black", width=box_width + 4)
+        draw.ellipse(bbox, outline="white", width=box_width + 2)
+
+        # mark centroid with a small cross
+        cs = max(4, pw_vis // 4)
+        draw.line([(int(cx) - cs, int(cy)), (int(cx) + cs, int(cy))], fill="white", width=box_width + 1)
+        draw.line([(int(cx), int(cy) - cs), (int(cx), int(cy) + cs)], fill="white", width=box_width + 1)
+
     # resize for saving
     if max_size is not None:
         w, h = out_img.size
@@ -1217,10 +1256,11 @@ def _render_one_slide(job):
     cmap_name        = job["cmap_name"]
     convert_to_pct   = job["convert_to_percentiles"]
     max_size         = job["max_size"]
-    use_raw          = job["use_raw"]
-    extract_region   = job["extract_region"]
-    draw_topk        = job["draw_topk"]
-    subplot_layout   = job["subplot_layout"]
+    use_raw              = job["use_raw"]
+    extract_region       = job["extract_region"]
+    draw_topk            = job["draw_topk"]
+    subplot_layout       = job["subplot_layout"]
+    draw_cluster_circle  = job["draw_cluster_circle"]
 
     data = np.load(os.path.join(att_dir, fname))
     coords = data["coords"].astype(np.float32)
@@ -1250,6 +1290,7 @@ def _render_one_slide(job):
             convert_to_percentiles=convert_to_pct,
             max_size=max_size,
             draw_topk=draw_topk,
+            draw_cluster_circle=draw_cluster_circle,
         )
 
         wsi = openslide.open_slide(slide_path)
@@ -1328,6 +1369,7 @@ def generate_all_attention_reports(
     extract_region=False,
     draw_topk=20,
     subplot_layout="horizontal",
+    draw_cluster_circle=False,
     results_csv=None,
     num_workers=None,
 ):
@@ -1350,6 +1392,7 @@ def generate_all_attention_reports(
         alpha=alpha, cmap_name=cmap_name, convert_to_percentiles=convert_to_percentiles,
         max_size=max_size, use_raw=use_raw, extract_region=extract_region,
         draw_topk=draw_topk, subplot_layout=subplot_layout,
+        draw_cluster_circle=draw_cluster_circle,
     )
     jobs = [{**shared, "fname": fname} for fname in files]
 
