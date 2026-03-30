@@ -27,6 +27,9 @@ defaults:
   patch_level: 1
   vis_level: -1
   # report_workers: 8  # override if needed; defaults to SLURM_CPUS_PER_TASK or os.cpu_count()
+  # --- pyramidal TIF export ---
+  save_tif: false           # set true to export attention as multiresolution TIF (saved to inference/tifs/)
+  tif_target_downsample: 8  # base pyramid level: ~8x from level 0 (~28 px per patch at patch_level 1)
 
 runs:
   baseline:
