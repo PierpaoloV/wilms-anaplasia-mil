@@ -258,28 +258,27 @@ def generate_experiment_reports(
 ):
     """Generate visual attention reports for all NPZs in experiment_dir/inference/."""
     fold_out    = os.path.join(experiment_dir, "inference")
-    wsi_dir     = cfg["wsi_dir"]
     results_csv = os.path.join(experiment_dir, "results", "per_slide_predictions.csv")
     generate_all_attention_reports(
         base_exp_dir=fold_out,
-        wsi_dir=wsi_dir,
-        patch_size=int(cfg.get("patch_size", 224)),
-        patch_level=int(cfg.get("patch_level", 1)),
-        vis_level=int(cfg.get("vis_level", -1)),
-        alpha=float(cfg.get("alpha", 0.6)),
-        cmap_name=cfg.get("cmap_name", "plasma"),
-        convert_to_percentiles=bool(cfg.get("convert_to_percentiles", True)),
-        max_size=int(cfg.get("max_size", 4096)),
+        wsi_dir=cfg["data"]["wsi_dir"],
+        patch_size=int(cfg["data"]["patch_size"]),
+        patch_level=int(cfg["data"]["patch_level"]),
+        vis_level=int(cfg["visualization"]["vis_level"]),
+        alpha=float(cfg["visualization"]["alpha"]),
+        cmap_name=cfg["visualization"]["cmap_name"],
+        convert_to_percentiles=bool(cfg["visualization"]["convert_to_percentiles"]),
+        max_size=int(cfg["visualization"]["max_size"]),
         use_raw=True,
         extract_region=extract_region,
-        draw_topk=int(cfg.get("draw_topk", 20)),
+        draw_topk=int(cfg["visualization"]["draw_topk"]),
         subplot_layout=subplot_layout,
         draw_cluster_circle=draw_cluster_circle,
         cluster_circle_max_radius_mm=cluster_circle_max_radius_mm,
-        save_tif=bool(cfg.get("save_tif", False)),
-        tif_target_downsample=float(cfg.get("tif_target_downsample", 8.0)),
+        save_tif=bool(cfg["export"]["save_tif"]),
+        tif_target_downsample=float(cfg["export"]["tif_target_downsample"]),
         results_csv=results_csv if os.path.exists(results_csv) else None,
-        num_workers=cfg.get("report_workers", None),
+        num_workers=cfg["visualization"].get("report_workers", None),
     )
 
 
@@ -302,10 +301,10 @@ def run_inference_fold(
     when looping over all folds so that report generation happens once at the
     end rather than once per fold.
     """
-    labels_csv = cfg.get("labels_csv") or cfg.get("labels_dir")
-    features_dir = os.path.join(cfg["base_dir"], "features")
-    coord_dir    = os.path.join(cfg["base_dir"], "coordinates")
-    wsi_dir      = cfg["wsi_dir"]
+    labels_csv   = cfg["data"]["labels_csv"]
+    features_dir = os.path.join(cfg["data"]["base_dir"], "features")
+    coord_dir    = os.path.join(cfg["data"]["base_dir"], "coordinates")
+    wsi_dir      = cfg["data"]["wsi_dir"]
 
     df       = pd.read_csv(labels_csv)
     fold_ids = df.loc[df["fold"] == fold, "slide_id"].astype(str).tolist()
@@ -330,9 +329,9 @@ def run_inference_fold(
 
     dev   = torch.device(device if torch.cuda.is_available() else "cpu")
     model = AttentionSingleBranch(
-        size=tuple(cfg["size"]),
-        use_dropout=cfg.get("use_dropout", False),
-        n_classes=cfg.get("n_classes", 2),
+        size=tuple(cfg["model"]["size"]),
+        use_dropout=cfg["model"].get("use_dropout", False),
+        n_classes=cfg["model"].get("n_classes", 2),
     )
     model.load_state_dict(torch.load(model_path, map_location=dev, weights_only=True))
     model.to(dev)

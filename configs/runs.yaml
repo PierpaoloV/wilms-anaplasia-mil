@@ -1,63 +1,87 @@
 defaults:
-  output_base_dir: "/home/user/experiments_complete"
-  base_dir: "/data/pathology/projects/pierpaolo/postdoc/Anaplasia_Classification/virchow/virchow_features/2025-10-08_14_17/"
-  labels_csv: "/data/pathology/projects/pierpaolo/postdoc/Anaplasia_Classification/csvs/splits_updated.csv"
-  wsi_dir: "/data/pa_cpgarchive/archives/kidney/Wilms_Tumor/Images/"
-  patch_size: 224
-  n_classes: 2
-  epochs: 20
-  lr: 1e-5
-  batch_size: 1
-  penalty_factor: 0.0
-  weight_decay: 1e-4
-  gmean_threshold: 0.55
-  label_smoothing: 0.1
-  weighted: false
-  size: [1280, 512, 128]
-  device: "cuda"
-  seed: 42
-  save_embeddings: true
-  mode: "full"
-  # --- visualization ---
-  draw_topk: 20
-  cmap_name: "plasma"
-  alpha: 0.6
-  convert_to_percentiles: true
-  max_size: 8192
-  patch_level: 1
-  vis_level: -1
-  # report_workers: 8  # override if needed; defaults to SLURM_CPUS_PER_TASK or os.cpu_count()
+  # --- experiment control ---
+  experiment:
+    output_base_dir: "/home/user/experiments_complete"
+    device: "cuda"
+    seed: 42
+    mode: "full"          # "full" | "train_only" | "reports_only"
+    save_embeddings: true
+
+  # --- data and feature extraction ---
+  data:
+    base_dir: "/data/pathology/projects/pierpaolo/postdoc/Anaplasia_Classification/virchow/virchow_features/2025-10-08_14_17/"
+    labels_csv: "/data/pathology/projects/pierpaolo/postdoc/Anaplasia_Classification/csvs/splits_updated.csv"
+    wsi_dir: "/data/pa_cpgarchive/archives/kidney/Wilms_Tumor/Images/"
+    patch_size: 224
+    patch_level: 1        # pyramid level used during feature extraction
+
+  # --- model architecture ---
+  model:
+    n_classes: 2
+    size: [1280, 512, 128]
+
+  # --- training optimisation ---
+  training:
+    epochs: 20
+    lr: 1e-5
+    batch_size: 1
+    weight_decay: 1e-4
+    label_smoothing: 0.1
+    weighted: false
+    penalty_factor: 0.0
+    gmean_threshold: 0.55  # legacy — no longer used for checkpoint gating
+
+  # --- heatmap visualisation ---
+  visualization:
+    draw_topk: 20
+    cmap_name: "plasma"
+    alpha: 0.6
+    convert_to_percentiles: true
+    max_size: 8192
+    vis_level: -1         # -1 → best_level_for_downsample(32)
+    report_workers: null  # null → auto (SLURM_CPUS_PER_TASK or os.cpu_count())
+
   # --- pyramidal TIF export ---
-  save_tif: false           # set true to export attention as multiresolution TIF (saved to inference/tifs/)
-  tif_target_downsample: 8  # base pyramid level: ~8x from level 0 (~28 px per patch at patch_level 1)
+  export:
+    save_tif: false           # set true to export attention as multiresolution TIF
+    tif_target_downsample: 8  # base pyramid level: ~8x from level 0
 
 runs:
   baseline:
     name: "anaplasia_mil_baseline"
-    
+
   baseline_weighted:
     name: "anaplasia_mil_weighted_baseline"
-    weighted: true
+    training:
+      weighted: true
 
   deep_attention:
     name: "anaplasia_mil_deep_weighted"
-    weighted: true
-    size: [1280, 2048, 1024, 512, 256]
+    training:
+      weighted: true
+    model:
+      size: [1280, 2048, 1024, 512, 256]
 
   only_yes:
-    name: "anaplasia_mil_only_yes_weigthed"
-    weighted: true
-    labels_csv: "/opt/app/user/postdoc/Anaplasia_Classification/csvs/splits_selected_yes.csv"
+    name: "anaplasia_mil_only_yes_weighted"
+    training:
+      weighted: true
+    data:
+      labels_csv: "/opt/app/user/postdoc/Anaplasia_Classification/csvs/splits_selected_yes.csv"
 
   deep_yes:
     name: "anaplasia_mil_deep_yes_weighted"
-    weighted: true
-    size: [1280, 2048, 1024, 512, 256]
-    labels_csv: "/opt/app/user/postdoc/Anaplasia_Classification/csvs/splits_selected_yes.csv"
+    training:
+      weighted: true
+    model:
+      size: [1280, 2048, 1024, 512, 256]
+    data:
+      labels_csv: "/opt/app/user/postdoc/Anaplasia_Classification/csvs/splits_selected_yes.csv"
 
   yes_penalty:
-    name: "anaplasia_mil_only_yes_weigthed_p20"
-    weighted: true
-    penalty_factor: 2.0
-    labels_csv: "/opt/app/user/postdoc/Anaplasia_Classification/csvs/splits_selected_yes.csv"
-    
+    name: "anaplasia_mil_only_yes_weighted_p20"
+    training:
+      weighted: true
+      penalty_factor: 2.0
+    data:
+      labels_csv: "/opt/app/user/postdoc/Anaplasia_Classification/csvs/splits_selected_yes.csv"

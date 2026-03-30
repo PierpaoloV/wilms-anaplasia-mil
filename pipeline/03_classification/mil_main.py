@@ -31,40 +31,36 @@ def _safe_cast(value):
         if val in ("true", "false"):
             return val == "true"
         try:
-            # Try float first (handles scientific notation like 1e-4)
             if any(c in val for c in [".", "e"]):
                 return float(val)
-            # Try int
             return int(val)
         except ValueError:
-            return value  # return original string if not numeric
+            return value
     elif isinstance(value, list):
-        # Recursively cast elements in lists
         return [_safe_cast(v) for v in value]
     return value
 
 
-# def load_config(config_path: str, run_name: str):
-#     """Load experiment config with safe casting and merged defaults."""
-#     with open(config_path, "r") as f:
-#         config_all = yaml.safe_load(f)
+def _deep_cast(obj):
+    """Recursively apply _safe_cast to all leaf values in a nested dict."""
+    if isinstance(obj, dict):
+        return {k: _deep_cast(v) for k, v in obj.items()}
+    return _safe_cast(obj)
 
-#     defaults = config_all.get("defaults", {})
-#     runs = config_all.get("runs", {})
 
-#     if run_name not in runs:
-#         raise ValueError(f"Run '{run_name}' not found in config file.")
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge override into base, returning a new dict."""
+    result = dict(base)
+    for k, v in override.items():
+        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+            result[k] = _deep_merge(result[k], v)
+        else:
+            result[k] = v
+    return result
 
-#     cfg = {**defaults, **runs[run_name]}
-#     cfg = {k: _safe_cast(v) for k, v in cfg.items()}  # ✅ auto-cast everything
 
-#     # Build output dir
-#     base_exp_dir = Path("/opt/app/user/postdoc/Anaplasia_Classification/virchow/experiments_complete_debug")
-#     cfg["output_dir"] = str(base_exp_dir / cfg["name"])
-
-#     return cfg
-def load_config(config_path: str, run_name: str):
-    """Load experiment config with safe casting and merged defaults."""
+def load_config(config_path: str, run_name: str) -> dict:
+    """Load experiment config, deep-merging defaults and run-specific overrides."""
     with open(config_path, "r") as f:
         config_all = yaml.safe_load(f)
 
@@ -74,27 +70,14 @@ def load_config(config_path: str, run_name: str):
     if run_name not in runs:
         raise ValueError(f"Run '{run_name}' not found in config file.")
 
-    # merge defaults + run-specific
-    cfg = {**defaults, **runs[run_name]}
-    cfg = {k: _safe_cast(v) for k, v in cfg.items()}  # auto-cast
+    cfg = _deep_merge(defaults, runs[run_name])
+    cfg = _deep_cast(cfg)
 
-    # -----------------------------
-    # OUTPUT DIR LOGIC (NEW)
-    # -----------------------------
-    # Priority:
-    # 1) run-level output_dir (absolute path)
-    # 2) output_base_dir + cfg["name"]
-    # 3) fallback to old hard-coded base dir + cfg["name"]
-
-    if "output_dir" in cfg and cfg["output_dir"]:
-        # output_dir explicitly set in YAML (can be absolute or relative)
+    # Build output_dir: explicit run-level override > experiment.output_base_dir + name
+    if cfg.get("output_dir"):
         cfg["output_dir"] = str(Path(cfg["output_dir"]))
     else:
-        output_base_dir = cfg.get(
-            "output_base_dir",
-            "/opt/app/user/postdoc/Anaplasia_Classification/virchow/experiments_complete"
-        )
-        cfg["output_dir"] = str(Path(output_base_dir) / cfg["name"])
+        cfg["output_dir"] = str(Path(cfg["experiment"]["output_base_dir"]) / cfg["name"])
 
     return cfg
 
@@ -102,14 +85,14 @@ def run_experiment(cfg):
     """Run a single MIL experiment (cross-validation + visualization)."""
     print(f"\n🚀 Starting experiment: {cfg['name']}")
     print("=" * 60)
-    device = torch.device(cfg.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
+    device = torch.device(cfg["experiment"].get("device", "cuda" if torch.cuda.is_available() else "cpu"))
     print(f"🧠 Device: {device}\n")
     output_dir = cfg["output_dir"]
-    # output_dir = f"/opt/app/user/postdoc/Anaplasia_Classification/virchow/experiments_complete/{cfg['name']}"
     os.makedirs(output_dir, exist_ok=True)
-    if cfg.get("only_reports", False):
-        print("🖼️ only_reports=True → skipping training, regenerating inference reports")
-        df    = pd.read_csv(cfg["labels_csv"])
+
+    if cfg["experiment"].get("mode") == "reports_only":
+        print("🖼️ mode=reports_only → skipping training, regenerating inference reports")
+        df    = pd.read_csv(cfg["data"]["labels_csv"])
         folds = sorted(df["fold"].unique())
         for fold in folds:
             print(f"\n--- Fold {fold} ---")
@@ -127,32 +110,32 @@ def run_experiment(cfg):
     fh.setFormatter(logging.Formatter("%(asctime)s  %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
     logger.addHandler(fh)
     logger.info(f"Experiment: {cfg['name']}")
-    logger.info(f"Config: { {k: v for k, v in cfg.items() if k not in ('output_dir','output_base_dir','wsi_dir')} }")
+    logger.info(f"Config: { {k: v for k, v in cfg.items() if k not in ('output_dir',)} }")
 
     try:
-        # --- Run cross-validation (trains all folds, saves best models + results CSV) ---
+        # --- Run cross-validation ---
         results_df, metrics_df, summary_df = cross_validate_mil(
-            splits_csv=cfg["labels_csv"],
-            features_dir=os.path.join(cfg["base_dir"], "features/"),
-            coord_dir=os.path.join(cfg["base_dir"], "coordinates/"),
+            splits_csv=cfg["data"]["labels_csv"],
+            features_dir=os.path.join(cfg["data"]["base_dir"], "features/"),
+            coord_dir=os.path.join(cfg["data"]["base_dir"], "coordinates/"),
             output_dir=output_dir,
-            n_classes=cfg["n_classes"],
-            epochs=int(cfg["epochs"]),
-            lr=float(cfg["lr"]),
-            batch_size=int(cfg["batch_size"]),
-            penalty_factor=float(cfg["penalty_factor"]),
-            size=tuple(cfg["size"]),
+            n_classes=cfg["model"]["n_classes"],
+            epochs=int(cfg["training"]["epochs"]),
+            lr=float(cfg["training"]["lr"]),
+            batch_size=int(cfg["training"]["batch_size"]),
+            penalty_factor=float(cfg["training"]["penalty_factor"]),
+            size=tuple(cfg["model"]["size"]),
             device=device,
-            weighted=cfg.get("weighted", False),
-            weight_decay=float(cfg.get("weight_decay", 1e-4)),
-            gmean_threshold=float(cfg.get("gmean_threshold", 0.55)),
-            label_smoothing=float(cfg.get("label_smoothing", 0.1)),
+            weighted=cfg["training"].get("weighted", False),
+            weight_decay=float(cfg["training"]["weight_decay"]),
+            gmean_threshold=float(cfg["training"]["gmean_threshold"]),
+            label_smoothing=float(cfg["training"]["label_smoothing"]),
             logger=logger,
         )
 
         # --- Generate attention heatmaps via the shared inference pipeline ---
-        if cfg.get("mode", "full") == "full":
-            df    = pd.read_csv(cfg["labels_csv"])
+        if cfg["experiment"].get("mode", "full") == "full":
+            df    = pd.read_csv(cfg["data"]["labels_csv"])
             folds = sorted(df["fold"].unique())
             for fold in folds:
                 print(f"\n--- Fold {fold} inference ---")
@@ -192,7 +175,7 @@ def main():
 
         for run_name in all_runs:
             cfg = load_config(args.config, run_name)
-            output_base_dir = cfg.get("output_base_dir", str(Path(cfg["output_dir"]).parent))
+            output_base_dir = cfg["experiment"]["output_base_dir"]
             summary_path = Path(cfg["output_dir"]) / "results" / "summary.csv"
 
             if summary_path.exists() and not args.rerun:
@@ -200,7 +183,7 @@ def main():
             else:
                 try:
                     print(f"\n🚀 Starting experiment: {cfg['name']}")
-                    print(f"{'='*60}\n🧠 Device: {cfg.get('device', 'cpu')}")
+                    print(f"{'='*60}\n🧠 Device: {cfg['experiment'].get('device', 'cpu')}")
                     print(f"\n🔍 CONFIGURATION FOR {cfg['name']}:")
                     for k, v in cfg.items():
                         print(f"  {k}: {v} ({type(v).__name__})")
@@ -217,13 +200,13 @@ def main():
             # Collect metrics regardless of whether we just ran or skipped
             if summary_path.exists():
                 df_s = pd.read_csv(summary_path, index_col=0)
-                labels_path = cfg.get("labels_csv") or cfg.get("labels_dir", "")
-                size = cfg.get("size", [])
+                labels_path = cfg["data"]["labels_csv"]
+                size = cfg["model"]["size"]
                 row = {
                     "run_name":       cfg["name"],
                     "dataset":        "yes_only" if "selected_yes" in str(labels_path) else "all",
-                    "weighted":       cfg.get("weighted", False),
-                    "penalty_factor": cfg.get("penalty_factor", 0.0),
+                    "weighted":       cfg["training"]["weighted"],
+                    "penalty_factor": cfg["training"]["penalty_factor"],
                     "architecture":   "→".join(str(s) for s in size),
                     "f1":           f"{round(df_s.loc['mean','f1'],4)} ± {round(df_s.loc['std','f1'],4)}",
                     "f1_median":    round(df_s.loc['median','f1'], 4),
