@@ -1251,7 +1251,7 @@ def wsi_attention_heatmap(
 
 
 def save_attention_as_tif(
-    slide_path: str,
+    wsi: "openslide.OpenSlide",
     coords_lvl0: np.ndarray,          # (N,2) patch top-lefts at level 0
     scores_raw: np.ndarray,            # (N,) raw attention scores
     out_path: str,
@@ -1278,7 +1278,6 @@ def save_attention_as_tif(
     For a large 40x slide this is roughly 12k×10k pixels (~360 MB RGB before
     compression). Increase target_downsample to 16 to halve memory usage.
     """
-    wsi = openslide.open_slide(slide_path)
 
     base_level = wsi.get_best_level_for_downsample(target_downsample)
     ds_base  = float(wsi.level_downsamples[base_level])
@@ -1440,7 +1439,6 @@ def _render_one_slide(job):
                 k=draw_topk, patch_level=patch_level, patch_size=patch_size,
                 grid=(4, 5), pad=6, cmap_name=cmap_name,
             )
-        wsi.close()
 
         title = _build_title(slide_id, pred_map)
 
@@ -1458,11 +1456,13 @@ def _render_one_slide(job):
         )
 
         if save_tif:
+            tif_out = os.path.join(job["tif_dir"], f"{slide_id}_attention.tif")
+            print(f"  [tif] saving {slide_id} → {tif_out}", flush=True)
             save_attention_as_tif(
-                slide_path=slide_path,
+                wsi=wsi,
                 coords_lvl0=coords,
                 scores_raw=scores_raw,
-                out_path=os.path.join(job["tif_dir"], f"{slide_id}_attention.tif"),
+                out_path=tif_out,
                 patch_level=patch_level,
                 patch_size=patch_size,
                 cmap_name=cmap_name,
@@ -1470,6 +1470,9 @@ def _render_one_slide(job):
                 convert_to_percentiles=convert_to_pct,
                 target_downsample=job["tif_target_downsample"],
             )
+            print(f"  [tif] done    {slide_id}", flush=True)
+
+        wsi.close()
 
         return slide_id, None
 
