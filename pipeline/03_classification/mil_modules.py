@@ -1317,7 +1317,6 @@ def save_attention_as_tif(
 
     # blend with WSI tissue at base level
     base_rgb = np.array(wsi.read_region((0, 0), base_level, (W_base, H_base)).convert("RGB"))
-    wsi.close()
 
     cmap = plt.get_cmap(cmap_name)
     color     = (cmap(overlay)[:, :, :3] * 255).astype(np.uint8)
@@ -1327,23 +1326,41 @@ def save_attention_as_tif(
         + color.astype(np.float32)  * alpha_map
     ).astype(np.uint8)
 
-    # build pyramid by 2x downsampling until max dim < 512
-    levels = [Image.fromarray(blended)]
-    while max(levels[-1].size) > 512:
-        w, h = levels[-1].size
-        levels.append(levels[-1].resize((max(1, w // 2), max(1, h // 2)), Image.BILINEAR))
-
-    # save as multi-page TIFF (largest level first — recognised as pyramid by QuPath/ASAP)
+    # save as pyramidal TIFF via ASAP ImageWriter (C++ backend builds all levels)
     out_dir = os.path.dirname(out_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
-    levels[0].save(
-        out_path,
-        format="TIFF",
-        save_all=True,
-        append_images=levels[1:],
-        compression="tiff_lzw",
-    )
+
+    mpp_x = wsi.properties.get(openslide.PROPERTY_NAME_MPP_X)
+    spacing = float(mpp_x) * ds_base if mpp_x is not None else 1.0
+
+    try:
+        from digitalpathology.image.io.imagewriter import ImageWriter
+        writer = ImageWriter(
+            image_path=out_path,
+            shape=(H_base, W_base),
+            spacing=spacing,
+            dtype=np.uint8,
+            coding="rgb",
+            compression="lzw",
+            interpolation="linear",
+            tile_size=512,
+        )
+        writer.fill(blended)
+        writer.close()
+    except Exception:
+        # fallback: manual PIL pyramid
+        levels = [Image.fromarray(blended)]
+        while max(levels[-1].size) > 512:
+            w, h = levels[-1].size
+            levels.append(levels[-1].resize((max(1, w // 2), max(1, h // 2)), Image.BILINEAR))
+        levels[0].save(
+            out_path,
+            format="TIFF",
+            save_all=True,
+            append_images=levels[1:],
+            compression="tiff_lzw",
+        )
 
     return out_path
 
