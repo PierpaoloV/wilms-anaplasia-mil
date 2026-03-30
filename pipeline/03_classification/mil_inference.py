@@ -10,7 +10,7 @@ from mil_main import load_config
 # ---------------------------------------------------------
 # Run full experiment
 # ---------------------------------------------------------
-def run_experiment(cfg, device, extract_region, combine_subplots, subplot_layout, checkpoint="auc", rerun=False):
+def run_experiment(cfg, device, extract_region, subplot_layout, checkpoint="auc", rerun=False):
     exp_name = cfg.get("name", cfg.get("run_key", "unknown"))
 
     labels_csv = cfg.get("labels_csv") or cfg.get("labels_dir")
@@ -44,7 +44,6 @@ def run_experiment(cfg, device, extract_region, combine_subplots, subplot_layout
         experiment_dir,
         cfg,
         extract_region=extract_region,
-        combine_subplots=combine_subplots,
         subplot_layout=subplot_layout,
     )
 
@@ -58,7 +57,6 @@ if __name__ == "__main__":
     parser.add_argument("--run", default="all", help="Run name or 'all'")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--extract_region", action="store_true")
-    parser.add_argument("--combine_subplots", action="store_true")
     parser.add_argument("--subplot_layout", default="horizontal")
     parser.add_argument("--checkpoint", default="auc", choices=["auc", "loss", "gmean"],
                         help="Which saved checkpoint to use for inference (default: auc)")
@@ -78,7 +76,6 @@ if __name__ == "__main__":
             cfg,
             device=args.device,
             extract_region=args.extract_region,
-            combine_subplots=args.combine_subplots,
             subplot_layout=args.subplot_layout,
             checkpoint=args.checkpoint,
             rerun=args.rerun,

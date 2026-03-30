@@ -252,7 +252,6 @@ def generate_experiment_reports(
     experiment_dir,
     cfg,
     extract_region=False,
-    combine_subplots=True,
     subplot_layout="horizontal",
 ):
     """Generate visual attention reports for all NPZs in experiment_dir/inference/."""
@@ -272,7 +271,6 @@ def generate_experiment_reports(
         use_raw=True,
         extract_region=extract_region,
         draw_topk=int(cfg.get("draw_topk", 20)),
-        combine_subplots=combine_subplots,
         subplot_layout=subplot_layout,
         results_csv=results_csv if os.path.exists(results_csv) else None,
         num_workers=cfg.get("report_workers", None),
@@ -287,7 +285,6 @@ def run_inference_fold(
     checkpoint="auc",
     generate_reports=True,
     extract_region=False,
-    combine_subplots=True,
     subplot_layout="horizontal",
 ):
     """
@@ -362,7 +359,6 @@ def run_inference_fold(
             experiment_dir,
             cfg,
             extract_region=extract_region,
-            combine_subplots=combine_subplots,
             subplot_layout=subplot_layout,
         )
 
@@ -853,10 +849,26 @@ def _combine_subplot(
     pad=30,
     bg=(255, 255, 255),
     title=None,
-    title_height=60
+    title_height=80,
 ):
     left = left.convert("RGB")
     right = right.convert("RGB")
+
+    # Try to load a readable font; fall back to PIL default if unavailable
+    _font_title = None
+    if title:
+        for font_path in [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/Library/Fonts/Arial Bold.ttf",
+        ]:
+            try:
+                _font_title = ImageFont.truetype(font_path, size=36)
+                break
+            except (IOError, OSError):
+                continue
 
     if layout == "horizontal":
         if left.height != right.height:
@@ -886,7 +898,9 @@ def _combine_subplot(
 
     if title:
         draw = ImageDraw.Draw(canvas)
-        draw.text((pad, 10), title, fill=(0, 0, 0))
+        # Centre the title vertically in the reserved header area
+        text_y = (top_pad - (_font_title.size if _font_title else 10)) // 2
+        draw.text((pad, max(text_y, 8)), title, fill=(20, 20, 20), font=_font_title)
 
     return canvas
 
@@ -1206,7 +1220,6 @@ def _render_one_slide(job):
     use_raw          = job["use_raw"]
     extract_region   = job["extract_region"]
     draw_topk        = job["draw_topk"]
-    combine_subplots = job["combine_subplots"]
     subplot_layout   = job["subplot_layout"]
 
     data = np.load(os.path.join(att_dir, fname))
@@ -1256,28 +1269,18 @@ def _render_one_slide(job):
 
         title = _build_title(slide_id, pred_map)
 
-        if combine_subplots:
-            combined = _combine_subplot(
-                heatmap_img, grid_img, layout=subplot_layout, pad=30, title=title,
+        combined = _combine_subplot(
+            heatmap_img, grid_img, layout=subplot_layout, pad=30, title=title,
+        )
+        if max(combined.size) > 9000:
+            f = 9000 / max(combined.size)
+            combined = combined.resize(
+                (int(combined.width * f), int(combined.height * f)), Image.BILINEAR
             )
-            if max(combined.size) > 9000:
-                f = 9000 / max(combined.size)
-                combined = combined.resize(
-                    (int(combined.width * f), int(combined.height * f)), Image.BILINEAR
-                )
-            combined.save(
-                os.path.join(out_dir, f"{slide_id}_combined.jpg"),
-                quality=92, optimize=True, progressive=True,
-            )
-        else:
-            heatmap_img.save(
-                os.path.join(out_dir, f"{slide_id}_heatmap_top{draw_topk}.jpg"),
-                quality=92, optimize=True, progressive=True,
-            )
-            grid_img.save(
-                os.path.join(out_dir, f"{slide_id}_top{draw_topk}_patches.jpg"),
-                quality=92, optimize=True, progressive=True,
-            )
+        combined.save(
+            os.path.join(out_dir, f"{slide_id}_combined.jpg"),
+            quality=92, optimize=True, progressive=True,
+        )
 
         return slide_id, None
 
@@ -1324,7 +1327,6 @@ def generate_all_attention_reports(
     use_raw=True,
     extract_region=False,
     draw_topk=20,
-    combine_subplots=True,
     subplot_layout="horizontal",
     results_csv=None,
     num_workers=None,
@@ -1347,8 +1349,7 @@ def generate_all_attention_reports(
         vis_level=vis_level, patch_level=patch_level, patch_size=patch_size,
         alpha=alpha, cmap_name=cmap_name, convert_to_percentiles=convert_to_percentiles,
         max_size=max_size, use_raw=use_raw, extract_region=extract_region,
-        draw_topk=draw_topk, combine_subplots=combine_subplots,
-        subplot_layout=subplot_layout,
+        draw_topk=draw_topk, subplot_layout=subplot_layout,
     )
     jobs = [{**shared, "fname": fname} for fname in files]
 
