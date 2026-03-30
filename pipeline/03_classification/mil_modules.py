@@ -1334,33 +1334,22 @@ def save_attention_as_tif(
     mpp_x = wsi.properties.get(openslide.PROPERTY_NAME_MPP_X)
     spacing = float(mpp_x) * ds_base if mpp_x is not None else 1.0
 
-    try:
-        from digitalpathology.image.io.imagewriter import ImageWriter
-        writer = ImageWriter(
-            image_path=out_path,
-            shape=(H_base, W_base),
-            spacing=spacing,
-            dtype=np.uint8,
-            coding="rgb",
-            compression="lzw",
-            interpolation="linear",
-            tile_size=512,
-        )
-        writer.fill(blended)
-        writer.close()
-    except Exception:
-        # fallback: manual PIL pyramid
-        levels = [Image.fromarray(blended)]
-        while max(levels[-1].size) > 512:
-            w, h = levels[-1].size
-            levels.append(levels[-1].resize((max(1, w // 2), max(1, h // 2)), Image.BILINEAR))
-        levels[0].save(
-            out_path,
-            format="TIFF",
-            save_all=True,
-            append_images=levels[1:],
-            compression="tiff_lzw",
-        )
+    import sys
+    sys.path.insert(0, "/home/user/source/pathology-common")
+    from digitalpathology.image.io.imagewriter import ImageWriter
+
+    writer = ImageWriter(
+        image_path=out_path,
+        shape=(H_base, W_base),
+        spacing=spacing,
+        dtype=np.uint8,
+        coding="rgb",
+        compression="lzw",
+        interpolation="linear",
+        tile_size=512,
+    )
+    writer.fill(blended)
+    writer.close()
 
     return out_path
 
