@@ -13,11 +13,10 @@ from mil_main import load_config
 def run_experiment(cfg, device, extract_region, subplot_layout, checkpoint="auc", rerun=False, draw_cluster_circle=False, cluster_circle_max_radius_mm=1.5):
     exp_name = cfg.get("name", cfg.get("run_key", "unknown"))
 
-    labels_csv = cfg.get("labels_csv") or cfg.get("labels_dir")
-    df = pd.read_csv(labels_csv)
+    df = pd.read_csv(cfg["data"]["labels_csv"])
     folds = sorted(df["fold"].unique())
 
-    experiment_dir = os.path.join(cfg["output_base_dir"], exp_name)
+    experiment_dir = os.path.join(cfg["experiment"]["output_base_dir"], exp_name)
     vis_dir = os.path.join(experiment_dir, "inference", "visual_reports")
     if not rerun and os.path.exists(vis_dir):
         n_files = len([f for f in os.listdir(vis_dir) if f.endswith(".png") or f.endswith(".jpg")])
