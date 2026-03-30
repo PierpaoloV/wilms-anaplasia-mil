@@ -10,7 +10,7 @@ from mil_main import load_config
 # ---------------------------------------------------------
 # Run full experiment
 # ---------------------------------------------------------
-def run_experiment(cfg, device, extract_region, subplot_layout, checkpoint="auc", rerun=False):
+def run_experiment(cfg, device, extract_region, subplot_layout, checkpoint="auc", rerun=False, draw_cluster_circle=False):
     exp_name = cfg.get("name", cfg.get("run_key", "unknown"))
 
     labels_csv = cfg.get("labels_csv") or cfg.get("labels_dir")
@@ -45,6 +45,7 @@ def run_experiment(cfg, device, extract_region, subplot_layout, checkpoint="auc"
         cfg,
         extract_region=extract_region,
         subplot_layout=subplot_layout,
+        draw_cluster_circle=draw_cluster_circle,
     )
 
 
@@ -58,6 +59,8 @@ if __name__ == "__main__":
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--extract_region", action="store_true")
     parser.add_argument("--subplot_layout", default="horizontal")
+    parser.add_argument("--draw_cluster_circle", action="store_true",
+                        help="Overlay attention-weighted centroid circle on the WSI heatmap")
     parser.add_argument("--checkpoint", default="auc", choices=["auc", "loss", "gmean"],
                         help="Which saved checkpoint to use for inference (default: auc)")
     parser.add_argument("--rerun", action="store_true", help="Regenerate reports even if they already exist")
@@ -79,6 +82,7 @@ if __name__ == "__main__":
             subplot_layout=args.subplot_layout,
             checkpoint=args.checkpoint,
             rerun=args.rerun,
+            draw_cluster_circle=args.draw_cluster_circle,
         )
 
     print("\n🎉 All runs completed.")
