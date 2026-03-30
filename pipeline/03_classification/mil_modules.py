@@ -1336,9 +1336,10 @@ def save_attention_as_tif(
 
     import sys
     sys.path.insert(0, "/home/user/source/pathology-common")
-    from digitalpathology.image.io.imagewriter import ImageWriter
+    import digitalpathology.image.io.imagewriter as dptimagewriter
 
-    writer = ImageWriter(
+    tile_size = 512
+    writer = dptimagewriter.ImageWriter(
         image_path=out_path,
         shape=(H_base, W_base),
         spacing=spacing,
@@ -1346,10 +1347,18 @@ def save_attention_as_tif(
         coding="rgb",
         compression="lzw",
         interpolation="linear",
-        tile_size=512,
+        tile_size=tile_size,
+        jpeg_quality=None,
+        empty_value=0,
+        skip_empty=None,
+        cache_path=None,
     )
-    writer.fill(blended)
-    writer.close()
+
+    for row in range(0, H_base, tile_size):
+        for col in range(0, W_base, tile_size):
+            writer.write(tile=blended[row:row + tile_size, col:col + tile_size], row=row, col=col)
+
+    writer.close(clear=True)
 
     return out_path
 
