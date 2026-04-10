@@ -223,6 +223,97 @@ class AttentionSingleBranch(nn.Module):
         return logits, results_dict
 
 
+class LegacyAttentionSingleBranch(nn.Module):
+    """
+    Backward-compatible loader for checkpoints trained before the 2026-03
+    architecture refactor.
+
+    State dict layout (old format):
+        attention_net.0.weight / .bias          — Linear(in_dim, hidden_dim)
+        attention_net.2.attention_a.0.weight …  — GatedAttention(hidden_dim, att_bottleneck)
+        attention_net.2.attention_b.0.weight …
+        attention_net.2.attention_c.weight …
+        classifiers.weight / .bias              — Linear(hidden_dim, n_classes)
+
+    Forward returns the same interface as the current AttentionSingleBranch:
+        logits          [1, n_classes]
+        results_dict    {"attention": [1, N, 1], "slide_embedding": [1, hidden_dim]}
+    """
+    def __init__(self, size=(1280, 512, 128), use_dropout=False, n_classes=2):
+        super().__init__()
+        assert len(size) == 3, "Legacy arch requires exactly size=(in_dim, hidden_dim, att_bottleneck)"
+        self.size = size
+        self.n_classes = n_classes
+
+        fc = [nn.Linear(size[0], size[1]), nn.ReLU()]
+        if use_dropout:
+            fc.append(nn.Dropout(0.25))
+        fc.append(GatedAttention(input_dim=size[1], bottleneck_dim=size[2],
+                                  dropout=use_dropout, n_branches=1))
+        self.attention_net = nn.Sequential(*fc)
+        self.classifiers = nn.Linear(size[1], n_classes)
+        self.apply(initialize_weights)
+
+    def forward(self, x):
+        # Accept [1, N, D] (DataLoader output) or [N, D] (unbatched)
+        if x.dim() == 3:
+            x = x.squeeze(0)            # → [N, D]
+
+        att_raw, h = self.attention_net(x)          # [N, 1], [N, H]
+        h_3d   = h.unsqueeze(0)                     # [1, N, H]
+        att_3d = att_raw.t().unsqueeze(0)           # [1, 1, N]
+        att_soft = F.softmax(att_3d, dim=2)         # [1, 1, N]
+
+        pooled = torch.bmm(att_soft, h_3d)          # [1, 1, H]
+        logits = self.classifiers(pooled).squeeze(1)  # [1, n_classes]
+
+        results_dict = {
+            "attention": att_raw.unsqueeze(0),      # [1, N, 1] — same shape as new model
+            "slide_embedding": pooled.squeeze(1).detach(),  # [1, H]
+        }
+        return logits, results_dict
+
+
+def load_mil_checkpoint(path, device="cpu", use_dropout=False):
+    """
+    Load an AttentionSingleBranch checkpoint and return a ready-to-use model.
+    Auto-detects old (attention_net / classifiers) vs new (patch_mlp / classifier)
+    state dict format and picks the right class.
+    """
+    sd = torch.load(path, map_location="cpu", weights_only=True)
+
+    if "patch_mlp.0.weight" in sd:
+        # ── New architecture ──────────────────────────────────────────────────
+        w0 = sd["patch_mlp.0.weight"]
+        in_dim = int(w0.shape[1])
+        hidden_dims, idx = [], 0
+        while f"patch_mlp.{idx}.weight" in sd:
+            hidden_dims.append(int(sd[f"patch_mlp.{idx}.weight"].shape[0]))
+            idx += 2
+        att_bottleneck = int(sd["attention.attention_a.0.weight"].shape[0])
+        n_classes = int(sd["classifier.weight"].shape[0])
+        size = tuple([in_dim] + hidden_dims + [att_bottleneck])
+        model = AttentionSingleBranch(size=size, use_dropout=use_dropout, n_classes=n_classes)
+
+    elif "attention_net.0.weight" in sd:
+        # ── Legacy architecture ───────────────────────────────────────────────
+        in_dim = int(sd["attention_net.0.weight"].shape[1])
+        hidden_dim = int(sd["attention_net.0.weight"].shape[0])
+        att_bottleneck = int(sd["attention_net.2.attention_a.0.weight"].shape[0])
+        n_classes = int(sd["classifiers.weight"].shape[0])
+        size = (in_dim, hidden_dim, att_bottleneck)
+        model = LegacyAttentionSingleBranch(size=size, use_dropout=use_dropout, n_classes=n_classes)
+
+    else:
+        raise ValueError(f"Unrecognised state dict format in {path}. "
+                         "Expected keys starting with 'patch_mlp.' or 'attention_net.'")
+
+    model.load_state_dict(sd, strict=True)
+    model.to(device)
+    model.eval()
+    return model
+
+
 def _save_attention(output_dir, slide_id, out, meta):
     """Save softmax attention scores + raw logits + coordinates to .npz."""
     att_raw = out.get("attention")
