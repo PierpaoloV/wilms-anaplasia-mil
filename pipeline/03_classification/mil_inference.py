@@ -10,7 +10,7 @@ from mil_main import load_config
 # ---------------------------------------------------------
 # Run full experiment
 # ---------------------------------------------------------
-def run_experiment(cfg, device, extract_region, subplot_layout, checkpoint="auc", rerun=False, draw_cluster_circle=False, cluster_circle_max_radius_mm=1.5):
+def run_experiment(cfg, device, extract_region, subplot_layout, checkpoint="auc", rerun=False, heatmap_only=False, draw_cluster_circle=False, cluster_circle_max_radius_mm=1.5):
     exp_name = cfg.get("name", cfg.get("run_key", "unknown"))
 
     df = pd.read_csv(cfg["data"]["labels_csv"])
@@ -44,6 +44,7 @@ def run_experiment(cfg, device, extract_region, subplot_layout, checkpoint="auc"
         cfg,
         extract_region=extract_region,
         subplot_layout=subplot_layout,
+        heatmap_only=heatmap_only,
         draw_cluster_circle=draw_cluster_circle,
         cluster_circle_max_radius_mm=cluster_circle_max_radius_mm,
     )
@@ -67,6 +68,8 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint", default="auc", choices=["auc", "loss", "gmean"],
                         help="Which saved checkpoint to use for inference (default: auc)")
     parser.add_argument("--rerun", action="store_true", help="Regenerate reports even if they already exist")
+    parser.add_argument("--heatmap_only", action="store_true",
+                        help="Save only the WSI heatmap ({slide_id}_heatmap.jpg) without the top-K patch grid")
 
     args = parser.parse_args()
 
@@ -85,6 +88,7 @@ if __name__ == "__main__":
             subplot_layout=args.subplot_layout,
             checkpoint=args.checkpoint,
             rerun=args.rerun,
+            heatmap_only=args.heatmap_only,
             draw_cluster_circle=args.draw_cluster_circle,
             cluster_circle_max_radius_mm=args.cluster_circle_max_radius_mm,
         )

@@ -344,6 +344,7 @@ def generate_experiment_reports(
     cfg,
     extract_region=False,
     subplot_layout="horizontal",
+    heatmap_only=False,
     draw_cluster_circle=False,
     cluster_circle_max_radius_mm=1.5,
 ):
@@ -364,6 +365,7 @@ def generate_experiment_reports(
         extract_region=extract_region,
         draw_topk=int(cfg["visualization"]["draw_topk"]),
         subplot_layout=subplot_layout,
+        heatmap_only=heatmap_only,
         draw_cluster_circle=draw_cluster_circle,
         cluster_circle_max_radius_mm=cluster_circle_max_radius_mm,
         save_tif=bool(cfg["export"]["save_tif"]),
@@ -1499,6 +1501,7 @@ def _render_one_slide(job):
     draw_cluster_circle          = job["draw_cluster_circle"]
     cluster_circle_max_radius_mm = job["cluster_circle_max_radius_mm"]
     save_tif                     = job["save_tif"]
+    heatmap_only                 = job.get("heatmap_only", False)
 
     data = np.load(os.path.join(att_dir, fname))
     coords = data["coords"].astype(np.float32)
@@ -1532,53 +1535,58 @@ def _render_one_slide(job):
             cluster_circle_max_radius_mm=cluster_circle_max_radius_mm,
         )
 
-        wsi = openslide.open_slide(slide_path)
-        if extract_region:
-            grid_img = _extract_top_regions_grid(
-                wsi=wsi, coords_lvl0=coords, scores=scores_raw,
-                k=6, patch_level=patch_level, patch_size=patch_size,
-                region_size=1024, grid=(3, 2), pad=8, cmap_name=cmap_name,
-            )
-        else:
-            grid_img, _ = _extract_top_patches_grid(
-                wsi=wsi, coords_lvl0=coords, scores=scores_raw,
-                k=draw_topk, patch_level=patch_level, patch_size=patch_size,
-                grid=(4, 5), pad=6, cmap_name=cmap_name,
-            )
-
         title = _build_title(slide_id, pred_map)
 
-        combined = _combine_subplot(
-            heatmap_img, grid_img, layout=subplot_layout, pad=30, title=title,
-        )
-        if max(combined.size) > 9000:
-            f = 9000 / max(combined.size)
-            combined = combined.resize(
-                (int(combined.width * f), int(combined.height * f)), Image.BILINEAR
+        if heatmap_only:
+            out_img = heatmap_img
+            out_name = f"{slide_id}_heatmap.jpg"
+        else:
+            wsi = openslide.open_slide(slide_path)
+            if extract_region:
+                grid_img = _extract_top_regions_grid(
+                    wsi=wsi, coords_lvl0=coords, scores=scores_raw,
+                    k=6, patch_level=patch_level, patch_size=patch_size,
+                    region_size=1024, grid=(3, 2), pad=8, cmap_name=cmap_name,
+                )
+            else:
+                grid_img, _ = _extract_top_patches_grid(
+                    wsi=wsi, coords_lvl0=coords, scores=scores_raw,
+                    k=draw_topk, patch_level=patch_level, patch_size=patch_size,
+                    grid=(4, 5), pad=6, cmap_name=cmap_name,
+                )
+            wsi.close()
+            out_img = _combine_subplot(
+                heatmap_img, grid_img, layout=subplot_layout, pad=30, title=title,
             )
-        combined.save(
-            os.path.join(out_dir, f"{slide_id}_combined.jpg"),
+            out_name = f"{slide_id}_combined.jpg"
+
+        if max(out_img.size) > 9000:
+            f = 9000 / max(out_img.size)
+            out_img = out_img.resize(
+                (int(out_img.width * f), int(out_img.height * f)), Image.BILINEAR
+            )
+        out_img.save(
+            os.path.join(out_dir, out_name),
             quality=92, optimize=True, progressive=True,
         )
 
         if save_tif:
             tif_out = os.path.join(job["tif_dir"], f"{slide_id}_attention.tif")
             print(f"  [tif] saving {slide_id} → {tif_out}", flush=True)
-            save_attention_as_tif(
-                wsi=wsi,
-                coords_lvl0=coords,
-                scores_raw=scores_raw,
-                out_path=tif_out,
-                patch_level=patch_level,
-                patch_size=patch_size,
-                cmap_name=cmap_name,
-                alpha=alpha,
-                convert_to_percentiles=convert_to_pct,
-                target_downsample=job["tif_target_downsample"],
-            )
+            with openslide.open_slide(slide_path) as wsi_tif:
+                save_attention_as_tif(
+                    wsi=wsi_tif,
+                    coords_lvl0=coords,
+                    scores_raw=scores_raw,
+                    out_path=tif_out,
+                    patch_level=patch_level,
+                    patch_size=patch_size,
+                    cmap_name=cmap_name,
+                    alpha=alpha,
+                    convert_to_percentiles=convert_to_pct,
+                    target_downsample=job["tif_target_downsample"],
+                )
             print(f"  [tif] done    {slide_id}", flush=True)
-
-        wsi.close()
 
         return slide_id, None
 
@@ -1626,6 +1634,7 @@ def generate_all_attention_reports(
     extract_region=False,
     draw_topk=20,
     subplot_layout="horizontal",
+    heatmap_only=False,
     draw_cluster_circle=False,
     cluster_circle_max_radius_mm=1.5,
     save_tif=False,
@@ -1654,7 +1663,7 @@ def generate_all_attention_reports(
         vis_level=vis_level, patch_level=patch_level, patch_size=patch_size,
         alpha=alpha, cmap_name=cmap_name, convert_to_percentiles=convert_to_percentiles,
         max_size=max_size, use_raw=use_raw, extract_region=extract_region,
-        draw_topk=draw_topk, subplot_layout=subplot_layout,
+        draw_topk=draw_topk, subplot_layout=subplot_layout, heatmap_only=heatmap_only,
         draw_cluster_circle=draw_cluster_circle,
         cluster_circle_max_radius_mm=cluster_circle_max_radius_mm,
         save_tif=save_tif,

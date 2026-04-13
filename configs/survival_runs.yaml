@@ -1,0 +1,66 @@
+defaults:
+  # --- experiment control ---
+  experiment:
+    output_base_dir: "/home/user/experiments_survival"   # PLACEHOLDER
+    device: "cuda"
+    seed: 42
+    save_embeddings: true
+
+  # --- data ---
+  # The dataset loads features_dir/<slide_id><feature_suffix>.pt and
+  # coord_dir/<slide_id>.npy. If features_dir/coord_dir are not set,
+  # the loader falls back to base_dir/{features,coordinates}.
+  data:
+    base_dir: "/PLACEHOLDER/path/to/cnio/feature_root/"
+    features_dir: null               # optional; defaults to base_dir/features
+    coord_dir: null                  # optional; defaults to base_dir/coordinates
+    labels_csv: "/PLACEHOLDER/path/to/test_cnio.csv"     # cols: slide_id, event, duration
+    wsi_dir: "/PLACEHOLDER/path/to/cnio/wsi/"
+    patch_size: 224
+    patch_level: 1
+
+  # --- model architecture (must match the pretrained checkpoint) ---
+  # 1280-D Virchow2 default. Override per-run for 2048-D (UNI / single-tissue)
+  # or 10240-D (multi-tissue concat).
+  model:
+    n_classes: 1
+    size: [1280, 512, 128]
+
+  # --- survival-specific options ---
+  survival:
+    checkpoint_path: "/PLACEHOLDER/path/to/pretrained_survival.pt"
+    duration_unit: "days"            # "days" or "years"; converted internally
+    clamp_years: [0.09, 4.37]        # tutorial convention; null to disable
+    eval_time_points: [180, 365, 730]  # in the native duration_unit
+    feature_suffix: ""               # e.g. "_total" for multi-tissue features
+
+  # --- heatmap visualisation (reused from 03_classification) ---
+  visualization:
+    draw_topk: 20
+    cmap_name: "plasma"
+    alpha: 0.6
+    convert_to_percentiles: true
+    max_size: 8192
+    vis_level: -1
+    report_workers: null
+
+  # --- pyramidal TIF export ---
+  export:
+    save_tif: false
+    tif_target_downsample: 8
+
+runs:
+  cnio_external:
+    name: "survival_cnio_external_virchow2"
+
+  cnio_external_uni:
+    name: "survival_cnio_external_uni"
+    model:
+      size: [2048, 512, 256]
+
+  cnio_external_multi_tissue:
+    name: "survival_cnio_external_multi_tissue"
+    model:
+      size: [10240, 512, 256]
+    survival:
+      feature_suffix: "_total"
