@@ -87,7 +87,8 @@ wilms-anaplasia-mil/
 ├── configs/
 │   ├── slide2vec.yaml                # slide2vec feature extraction config
 │   ├── runs.yaml                     # AMIL experiment registry
-│   └── linear_runs.yaml              # Linear/MLP baseline registry
+│   ├── linear_runs.yaml              # Linear/MLP baseline registry
+│   └── survival_runs.yaml            # Survival MIL experiment registry
 │
 ├── pipeline/
 │   ├── 01_segmentation/
@@ -97,12 +98,18 @@ wilms-anaplasia-mil/
 │   ├── 02_feature_extraction/
 │   │   └── prepare_csv.py            # Generate slide2vec input CSV from WSI + mask dirs
 │   │
-│   └── 03_classification/
-│       ├── mil_modules.py            # Core: AMIL model, dataset, training, visualization
-│       ├── mil_main.py               # Training CLI
-│       ├── mil_inference.py          # Inference + heatmap generation CLI
-│       ├── preprocessing.py          # Patient-level fold generation & leakage check
-│       └── linear_probing.py         # Linear / MLP baseline classifiers
+│   ├── 03_classification/
+│   │   ├── mil_modules.py            # Core: AMIL model, dataset, training, visualization
+│   │   ├── mil_main.py               # Training CLI
+│   │   ├── mil_inference.py          # Inference + heatmap generation CLI
+│   │   ├── preprocessing.py          # Patient-level fold generation & leakage check
+│   │   └── linear_probing.py         # Linear / MLP baseline classifiers
+│   │
+│   └── 04_survival/
+│       ├── survival_dataset.py       # SurvivalSlideDataset (event/duration labels, dim-agnostic)
+│       ├── survival_model.py         # SurvivalMIL wrapper (AttentionSingleBranch, n_classes=1)
+│       ├── survival_metrics.py       # C-index, time-dependent AUC, Kaplan-Meier helpers
+│       └── survival_inference.py     # External validation CLI
 │
 ├── scripts/
 │   └── run_pipeline.slurm            # End-to-end SLURM job script
@@ -198,16 +205,15 @@ When two or more criteria point to the same epoch this is logged and the checkpo
 ### 6. Inference & Attention Heatmaps
 
 ```bash
-# Heatmap + top-k region grid (one PNG per slide)
+# Heatmap + top-k patch grid (one PNG per slide)
 python pipeline/03_classification/mil_inference.py \
     --config configs/runs.yaml \
-    --run all --rerun --device cuda \
-    --extract_region --combine_subplots
+    --run all --rerun --device cuda
 
-# Heatmap only (paper figures)
+# Heatmap only — no patch grid (suitable for paper figures)
 python pipeline/03_classification/mil_inference.py \
     --config configs/runs.yaml \
-    --run all --device cuda
+    --run all --device cuda --heatmap_only
 ```
 
 Use `--checkpoint` to select which saved model to load per fold (default: `auc`):
@@ -244,7 +250,61 @@ Use `external_inference.ipynb` to run ensemble inference on an external dataset.
 - `.npz` attention files (per fold + ensemble)
 - PNG reports — combined (heatmap + ranked patch grid) or heatmap-only
 
-### 9. Full pipeline via SLURM
+### 9. Survival Prediction — External Validation
+
+`pipeline/04_survival/` extends the same MIL backbone to predict patient survival (Cox-style) on an external cohort. It reuses `AttentionSingleBranch` and the full heatmap rendering stack from `03_classification` — only the output head (single risk score instead of class logits), loss function, and evaluation metrics differ.
+
+**Setup** — fill in the four placeholder paths in `configs/survival_runs.yaml`:
+
+```yaml
+data:
+  base_dir:        /path/to/feature_root/   # contains features/ and coordinates/
+  labels_csv:      /path/to/cohort.csv      # columns: slide_id, event, duration
+  wsi_dir:         /path/to/wsi/
+survival:
+  checkpoint_path: /path/to/survival.pt
+```
+
+**Run external validation:**
+
+```bash
+# Full run: scores + metrics + KM plot + heatmaps
+python pipeline/04_survival/survival_inference.py \
+    --config configs/survival_runs.yaml --run cnio_external --device cuda
+
+# Smoke test (no heatmap rendering)
+python pipeline/04_survival/survival_inference.py \
+    --config configs/survival_runs.yaml --run cnio_external --device cuda --no_reports
+
+# Heatmap only (no patch grid)
+python pipeline/04_survival/survival_inference.py \
+    --config configs/survival_runs.yaml --run cnio_external --device cuda --heatmap_only
+```
+
+**Outputs** (under `experiment.output_base_dir/<run_name>/`):
+
+| File | Content |
+|------|---------|
+| `results/predictions.csv` | `slide_id, risk_score, event, duration_*` |
+| `results/metrics.json` | C-index, time-dependent AUC at configured time points |
+| `results/kaplan_meier_median_split.png` | KM curves stratified by median risk (log-rank p-value) |
+| `inference/attentions/*.npz` | Per-slide attention scores + coordinates |
+| `inference/embeddings/*.npy` | Per-slide 1280-D slide embeddings |
+| `inference/visual_reports/*.jpg` | Attention heatmap reports |
+
+**Feature dimension** is inferred automatically from the checkpoint state dict — 1280-D (Virchow2), 2048-D (UNI), and 10240-D (multi-tissue concat) all work without code changes. For multi-tissue features stored as `{slide_id}_total.pt`, set `survival.feature_suffix: "_total"` in the config.
+
+The three preconfigured runs in `configs/survival_runs.yaml` cover all three feature dimensions:
+
+| Run | Feature dim | `size` |
+|-----|:-----------:|--------|
+| `cnio_external` | 1280 | `[1280, 512, 128]` |
+| `cnio_external_uni` | 2048 | `[2048, 512, 256]` |
+| `cnio_external_multi_tissue` | 10240 | `[10240, 512, 256]` |
+
+---
+
+### 10. Full pipeline via SLURM
 
 Edit the `PATHS` section in `scripts/run_pipeline.slurm`, then:
 
@@ -281,7 +341,7 @@ Linear probing and MLP classifiers on frozen features — 18 runs covering:
 Attention reports are generated by `wsi_attention_heatmap` in `mil_modules.py`. Each PNG shows:
 
 - **Left**: WSI thumbnail with plasma colormap overlay. Alpha is proportional to attention score — low-attention regions show raw tissue, high-attention regions receive full color.
-- **Right** (`combine_subplots=True`): Top-k patches or context regions ranked by attention, with plasma-scale colored borders (bright = rank #1) and rank + score annotations.
+- **Right** (default, suppressed by `--heatmap_only`): Top-k patches or context regions ranked by attention, with plasma-scale colored borders (bright = rank #1) and rank + score annotations.
 
 Key parameters (set in `configs/runs.yaml`):
 
@@ -291,7 +351,7 @@ Key parameters (set in `configs/runs.yaml`):
 | `alpha` | `0.6` | Max overlay opacity (reached at peak attention) |
 | `draw_topk` | `20` | Number of top patches/regions highlighted |
 | `extract_region` | `false` | `true` = 6 context regions (1024×1024); `false` = 20 patches |
-| `combine_subplots` | CLI flag | Pass `--combine_subplots` for combined PNG |
+| `heatmap_only` | CLI flag | Pass `--heatmap_only` to save heatmap without patch grid (paper figures) |
 | `report_workers` | auto | Workers for parallel report generation (defaults to `SLURM_CPUS_PER_TASK`) |
 
 ---
